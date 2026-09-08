@@ -1,0 +1,32 @@
+---
+# Standalone test of the PilotProxy DTV detector datapath: the
+# testPilotProxyDetector stage invents voltage/weight data, runs the packer
+# GPU kernel plus the vendored F-statistic CUDA library (external/pilotproxy),
+# and compares every product bit-for-bit against the CPU references (packer
+# oracle, vendored integer references, the frozen fxfft256 v1 FFT, and a
+# bit-exact port of pilot-proxy's fine decision v1).
+# All test parameters are hard-coded in the stage, so no config is required
+# beyond the stage itself.
+#
+# It runs as a kotekan stage under the gpu_batch CI harness rather than as
+# a boost unit test because the GPU-vs-CPU sweep needs a CUDA device. The
+# boost tests build and run on CPU-only CI jobs, while gpu_batch configs
+# execute on the GPU runner (config/ci-tests/README.md; the same pattern
+# as test_pl_mask_upchannelizer.yaml and the verify_cuda_n2k harnesses).
+# If the boost tests grow a GPU-node lane, the sweep body could port
+# directly, since it is a self-contained function of the invented inputs.
+
+type: config
+log_level: INFO
+
+cpu_affinity: [0]
+
+# Required by the default telescope setup (the stage itself reads no config).
+num_polarizations: 2
+num_dishes: 512
+
+test_pilotproxy_detector:
+    kotekan_stage: testPilotProxyDetector
+    # Safety cap for the GPU-vs-CPU sweep in debug builds.
+    join_timeout: 120
+log_config_usage: fatal_error

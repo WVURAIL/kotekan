@@ -28,6 +28,11 @@ prefix_host_rank: true
 {% include "include/upchan_chord.j2" %}
 {% include "include/frb_chord.j2" %}
 
+# DTV pilot-tone detector (PilotProxy). Requires a runtime weight bundle with
+# calibrated fine decisions for every pilot channel on the node (see
+# include/dtv_chord.j2); enable only after that deployment gate is closed.
+{# {% include "include/dtv_chord.j2" %} #}
+
 {% include "include/input_chord.j2" %}
 {% include "include/output_chord.j2" %}
 ...

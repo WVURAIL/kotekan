@@ -1,0 +1,17 @@
+{
+  "schema": "kotekan_vendor_manifest_v1",
+  "component": "pilotproxy-detector-core",
+  "upstream_repo": "https://github.com/WVURAIL/pilot-proxy",
+  "upstream_subdir": "cuda",
+  "upstream_commit": "53a5dbe56dead32f9c2cdcf84b0af830c52b8d62",
+  "policy": "Files below are byte-identical copies of upstream. Re-vendoring is a pure copy + hash comparison; local edits are not permitted. Fix upstream first, then bump upstream_commit and refresh these digests.",
+  "files": {
+    "config.h": "sha256:c675a4c517f6abe9d3ca4121e3507c741fa7030da20404c51025028ace30365d",
+    "f_statistic.h": "sha256:61182c7610ac99856d6aed746d64893ea1f2eb1e171512ea1ce331785ae060a8",
+    "f_statistic.cu": "sha256:ae6d45447854d54f688a21e79c709ed484e6c2e75368799524b1005a62e6aea6",
+    "f_statistic_reference.h": "sha256:24d3ebdd819fb4cbb714fdda796f5c39a6fb152bdf069557602e74ad7c5c0dca",
+    "f_statistic_reference.cpp": "sha256:8c1e241fedf1a3502f3bbc37c85e0e17748dbd4740b7305a0ba8d10b0fa5a0ec",
+    "fxfft_master_twiddle.h": "sha256:25e3c33ae3819b640604eb9b7ca6c95a5275d794d70a7f39e3d74301bb188c49",
+    "fxfft256_ref.c": "sha256:006516487af814f0dfd4458b87b341fbf90e76bbf4986e1066aa207eeec45b69"
+  }
+}
