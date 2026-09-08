@@ -124,3 +124,46 @@ run_dtv_detector:
         - name: cudaOutputData
           gpu_mem: dtv_powers_buffer
           out_buf: host_dtv_powers
+
+# Opt-in applied path. Both n2k correlation and its valid-sample counts must
+# consume dtv_RFImask. Disabled by default; local tests do not qualify a
+# telescope deployment or demonstrate shared-GPU timing acceptance.
+{% if dtv_apply_mask|default(false) %}
+host_dtv_RFImask_buffer:
+    kotekan_buffer: ndarray
+    num_frames: buffer_depth
+    value_type: uint1x8
+    extents: [num_times / 1024, num_frequencies, 128]
+    quantity_name: "RFImask"
+    dimnames: ["T8hi128", "F", "T8lo128"]
+    dimscalings: [1024, 1, 8]
+    metadata_pool: main_pool
+
+host_dtv_RFImask_ringbuffer:
+    kotekan_buffer: ring
+    ring_buffer_size: buffer_depth * num_frequencies * num_times / 8
+    metadata_pool: main_pool
+
+run_combine_dtv_mask:
+    kotekan_stage: DtvRfiMask
+    num_local_freq: num_frequencies
+    rfi_buf: host_rfi_RFImask_buffer
+    dtv_buf: host_dtv_mask_buffer
+    out_buf: host_dtv_RFImask_buffer
+
+run_send_dtv_RFImask:
+    gpu_0:
+        kotekan_stage: cudaProcess
+        gpu_id: 0
+        in_buffers:
+            host_dtv_RFImask_buffer: host_dtv_RFImask_buffer
+        out_buffers:
+            host_dtv_RFImask_ringbuffer: host_dtv_RFImask_ringbuffer
+        commands:
+        - name: cudaCopyToRingbuffer
+          input_size: num_frequencies * num_times / 8
+          ring_buffer_size: buffer_depth * input_size
+          in_buf: host_dtv_RFImask_buffer
+          signal_buf: host_dtv_RFImask_ringbuffer
+          gpu_mem_output: dtv_RFImask_buffer
+{% endif %}

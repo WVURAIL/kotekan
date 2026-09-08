@@ -23,6 +23,7 @@ prefix_host_rank: true
 {% include "include/fengine_chord.j2" %}
 
 {% include "include/rfi_chord.j2" %}
+{% set n2k_rfi_name = "dtv_RFImask" if dtv_apply_mask|default(false) else "rfi_RFImask" %}
 {% include "include/n2k_chord.j2" %}
 {% include "include/bb_chord.j2" %}
 {% include "include/upchan_chord.j2" %}
@@ -31,7 +32,9 @@ prefix_host_rank: true
 # DTV pilot-tone detector (PilotProxy). Requires a runtime weight bundle with
 # calibrated fine decisions for every pilot channel on the node (see
 # include/dtv_chord.j2); enable only after that deployment gate is closed.
-{# {% include "include/dtv_chord.j2" %} #}
+{% if dtv_enabled|default(false) or dtv_apply_mask|default(false) %}
+{% include "include/dtv_chord.j2" %}
+{% endif %}
 
 {% include "include/input_chord.j2" %}
 {% include "include/output_chord.j2" %}

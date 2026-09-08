@@ -61,10 +61,42 @@ soak is a correctness stress test, not a deployment throughput measurement.
 
 ## Applied-mask integration status
 
-The detector and file-pipeline parity tests validate the producer and transport.
-The supplied `dtv_chord.j2` include exports the DTV mask/power buffers; it does
-not connect them to `cudaCorrelator`'s separate `rfi_RFImask` stream. Applied
-masking therefore still requires an adapter and tests of frame ordering,
-visibility accumulation and valid-sample/weight normalization. Equal nominal
-frame lengths and successful output replay do not demonstrate this connection.
-The telescope shadow run and science-transfer measurement remain separate gates.
+The default pipeline still leaves DTV application disabled. Render `chord.j2`
+with `dtv_enabled=true` for detector-only output, or `dtv_apply_mask=true` for
+the opt-in applied path. Calibration remains mandatory for pilot channels.
+These flags select implementation paths; they do not certify a telescope run.
+
+`DtvRfiMask` intersects one binary DTV rejection per coarse channel with the
+existing bit-packed RFI good-sample mask. It supports exactly one 8192-sample
+CHORD block per mask frame. It checks start sequence, sample period, coarse
+frequency order, un-upchannelized identity, continuity and binary decisions.
+An absent input blocks progress; a mismatching input stops the run. It never
+reuses a previous decision. The host round trip is intentional in this local
+implementation and needs full-load latency/throughput acceptance.
+
+Both `cudaCorrelator` and `cudaPL1bitCorrelator` consume the merged GPU mask;
+`RfiMaskSum` consumes the corresponding host mask. Original RFI, DTV decision,
+DTV powers and the merged applied mask have distinct recording products. The
+existing count consumer receives counts after both DTV/RFI gating and packet
+loss; normalizing against nominal time would be incorrect. Zero counts denote
+unmeasured products. Final accumulated visibility normalization/variance under
+this path remains an additional acceptance check.
+
+```sh
+python -m pytest tests/test_dtv_rfi_mask.py -q
+```
+
+Use the same `PILOTPROXY_TEST_BINARY` and `PILOTPROXY_TEST_BUNDLE` settings as
+above. The tests generate local metadata-bearing files, inject known nonuniform
+masks and packet loss, and run the adapter, real CUDA visibility/count correlators
+and RFI-count stage. They compare all visibility components and counts with CPU
+calculations for 128 inputs, four frequencies and eight frames over a four-frame
+ring. Both prescribed decisions and the actual synthetically calibrated detector
+are exercised. Wrong frequency, late/missing decisions, wrong time periods and
+nonbinary values are refused. Configuration tests ensure both correlators and
+the RFI-count diagnostic select the same mask and that the default stays off.
+
+These local tests are not Pathfinder operation, scientific threshold calibration,
+shared-GPU deadline acceptance, separate reason-coded input-health validation,
+or a measured science-transfer function. Shadow and applied telescope runs
+remain pending.
