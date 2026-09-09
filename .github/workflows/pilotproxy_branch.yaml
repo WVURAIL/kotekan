@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,26 +19,66 @@ concurrency:
 jobs:
   cpu-regressions:
     name: CPU normalization and framing
-    uses: ./.github/workflows/test_kotekan_build.yaml
-    with:
-      container_image: ghcr.io/wvurail/kotekan/kotekan-2404-cpu@sha256:6ef8203719302cc10e410755d61b26cdd4cd11ff918e2765d3a5b3d46f351db5
-      ccache_key: pilotproxy-normalization-cpu
-      cmake_defs: >-
-        -DCMAKE_BUILD_TYPE=Test -DWERROR=ON -DCCACHE=ON
-        -DCMAKE_CXX_FLAGS=-DBLAZE_CACHE_SIZE=8388608UL
-        -DUSE_OMP=ON -DUSE_NUMA=ON -DNO_MEMLOCK=ON
-        -DUSE_CUDA=OFF -DUSE_HIP=OFF -DUSE_OPENCL=OFF
-        -DUSE_ASDF=ON -DUSE_HDF5=ON -DUSE_GDAL=ON
-        -DUSE_AIRSPY=ON -DUSE_LAPACK_BLAZE=ON -DUSE_FFTW=ON
-        -DUSE_JULIA=OFF -DUSE_DPDK=OFF -DUSE_LTO=OFF
-        -DWITH_TESTS=ON -DWITH_BOOST_TESTS=ON
-      post_build: |
-        export PYTHONPATH="$GITHUB_WORKSPACE/python"
-        export KOTEKAN_BUILD_DIRNAME=build-2404
-        export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
-        cd "$GITHUB_WORKSPACE"
-        python3 tools/check_vendored_pilotproxy.py --offline
-        python3 -m pytest -q --timeout=60 \
-          tests/test_n2*.py tests/test_dtv_input_health.py \
-          tests/test_raw_file_framing.py tests/test_rfi_masksum.py
-        bash tests/boost/run_boost_tests.sh -t 60 build-2404/tests/boost
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      KOTEKAN_BUILD_DIRNAME: build/ci-cpu
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install CPU test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache cmake pkg-config libevent-dev libssl-dev \
+            libnuma-dev libfftw3-dev libhdf5-dev libboost-filesystem-dev \
+            libboost-system-dev libboost-test-dev
+          python -m pip install \
+            numpy astropy h5py hdf5plugin bitshuffle mpmath posix_ipc \
+            flask requests jinja2 pyyaml pytest pytest-localserver pytest-timeout
+      - name: Check out HighFive
+        uses: actions/checkout@v6
+        with:
+          repository: highfive-devs/highfive
+          ref: v3.2.0
+          path: build/highfive
+          persist-credentials: false
+      - name: Install HighFive
+        run: |
+          cmake -S build/highfive -B build/highfive-build \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highfive" \
+            -DHIGHFIVE_UNIT_TESTS=OFF -DHIGHFIVE_EXAMPLES=OFF \
+            -DHIGHFIVE_BUILD_DOCS=OFF
+          cmake --install build/highfive-build
+      - uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: pilotproxy-cpu-${{ runner.os }}-${{ github.sha }}
+          restore-keys: pilotproxy-cpu-${{ runner.os }}-
+      - name: Build CPU stages and Boost tests
+        run: |
+          cmake -S . -B "$KOTEKAN_BUILD_DIRNAME" \
+            -DARCH=haswell -DCMAKE_BUILD_TYPE=Test -DWERROR=ON -DCCACHE=ON \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/highfive" \
+            -DPython3_EXECUTABLE="$(command -v python)" \
+            -DUSE_OMP=ON -DUSE_NUMA=ON -DNO_MEMLOCK=ON \
+            -DUSE_CUDA=OFF -DUSE_HIP=OFF -DUSE_OPENCL=OFF \
+            -DUSE_ASDF=OFF -DUSE_HDF5=ON -DUSE_GDAL=OFF \
+            -DUSE_AIRSPY=OFF -DUSE_LAPACK_BLAZE=OFF -DUSE_FFTW=ON \
+            -DUSE_JULIA=OFF -DUSE_DPDK=OFF -DUSE_LTO=OFF \
+            -DWITH_TESTS=ON -DWITH_BOOST_TESTS=ON
+          cmake --build "$KOTEKAN_BUILD_DIRNAME" --parallel 4
+      - name: Run normalization and framing regressions
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/python"
+          export HDF5_PLUGIN_PATH="$(python -c 'import hdf5plugin; print(hdf5plugin.PLUGINS_PATH)')"
+          python tools/check_vendored_pilotproxy.py --offline
+          python -m pytest -q --timeout=60 \
+            tests/test_n2*.py tests/test_dtv_input_health.py \
+            tests/test_raw_file_framing.py tests/test_rfi_masksum.py
+          bash tests/boost/run_boost_tests.sh -t 60 "$KOTEKAN_BUILD_DIRNAME/tests/boost"
