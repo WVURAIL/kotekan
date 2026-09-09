@@ -1,0 +1,45 @@
+---
+name: PilotProxy branch checks
+
+on:
+  push:
+    branches:
+      - pilot-proxy
+  pull_request:
+    branches:
+      - pilot-proxy
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu-regressions:
+    name: CPU normalization and framing
+    uses: ./.github/workflows/test_kotekan_build.yaml
+    with:
+      container_image: ghcr.io/wvurail/kotekan/kotekan-2404-cpu@sha256:6ef8203719302cc10e410755d61b26cdd4cd11ff918e2765d3a5b3d46f351db5
+      ccache_key: pilotproxy-normalization-cpu
+      cmake_defs: >-
+        -DCMAKE_BUILD_TYPE=Test -DWERROR=ON -DCCACHE=ON
+        -DCMAKE_CXX_FLAGS=-DBLAZE_CACHE_SIZE=8388608UL
+        -DUSE_OMP=ON -DUSE_NUMA=ON -DNO_MEMLOCK=ON
+        -DUSE_CUDA=OFF -DUSE_HIP=OFF -DUSE_OPENCL=OFF
+        -DUSE_ASDF=ON -DUSE_HDF5=ON -DUSE_GDAL=ON
+        -DUSE_AIRSPY=ON -DUSE_LAPACK_BLAZE=ON -DUSE_FFTW=ON
+        -DUSE_JULIA=OFF -DUSE_DPDK=OFF -DUSE_LTO=OFF
+        -DWITH_TESTS=ON -DWITH_BOOST_TESTS=ON
+      post_build: |
+        export PYTHONPATH="$GITHUB_WORKSPACE/python"
+        export KOTEKAN_BUILD_DIRNAME=build-2404
+        export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+        cd "$GITHUB_WORKSPACE"
+        python3 tools/check_vendored_pilotproxy.py --offline
+        python3 -m pytest -q --timeout=60 \
+          tests/test_n2*.py tests/test_dtv_input_health.py \
+          tests/test_raw_file_framing.py tests/test_rfi_masksum.py
+        bash tests/boost/run_boost_tests.sh -t 60 build-2404/tests/boost

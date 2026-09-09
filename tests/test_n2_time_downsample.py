@@ -408,6 +408,8 @@ def test_metadata(n2_data):
         assert frame.metadata.frame_length_fpga_ticks == frame_meta[i]["seq_len"]
         assert frame.metadata.n_valid_fpga_ticks == frame_meta[i]["seq_valid"]
         assert frame.metadata.n_rfi_fpga_ticks == frame_meta[i]["seq_rfi"]
+        assert frame.metadata.n_rfi_only_fpga_ticks == frame_meta[i]["seq_rfi"]
+        assert frame.metadata.n_pl_fpga_ticks == frame_meta[i]["n_frames"]
 
 
 def test_time(n2_data):
@@ -516,4 +518,6 @@ def test_contents(n2_data):
 
     # weights get an extra factor of nsamp
     for i, frame in enumerate(n2_data):
-        assert np.all(frame.weight == out_frame_metas[i]["n_frames"])
+        np.testing.assert_allclose(
+            frame.weight, out_frame_metas[i]["n_frames"], rtol=2e-6
+        )

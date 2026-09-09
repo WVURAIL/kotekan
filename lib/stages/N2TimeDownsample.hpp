@@ -1,84 +1,63 @@
-/*****************************************
-@file
-@brief Reduce cadence of a single-frequency.
-- N2TimeDownsample : public kotekan::Stage
-*****************************************/
 #ifndef N2_TIME_DOWNSAMP_HPP
 #define N2_TIME_DOWNSAMP_HPP
 
-#include "Config.hpp"          // for Config
-#include "Stage.hpp"           // for Stage
-#include "Telescope.hpp"       // for ElementOrder
-#include "buffer.hpp"          // for Buffer
-#include "bufferContainer.hpp" // for bufferContainer
-#include "geoUtil.hpp"         // for vec3d_t
+#include "Config.hpp"
+#include "Stage.hpp"
+#include "buffer.hpp"
+#include "bufferContainer.hpp"
+#include "geoUtil.hpp"
 
-#include <stddef.h> // for size_t
-#include <stdint.h> // for uint32_t
-#include <string>   // for string
+#include <stddef.h>
+#include <stdint.h>
+#include <string>
+#include <vector>
 
 /**
  * @class N2TimeDownsample
- * @brief Average a set number of frames on a single-frequency stream to
- *        effectively reduce the cadence of the acquisition.
+ * @brief Count-weighted downsampling of a continuous, single-frequency N2 stream.
  *
- * This stage accumulates and averages a specified number of incoming frames on
- * a single-frequency stream to reduce the cadence of the acquisition.
- * Visibilities, eigenvectors, eigenvalues, eigen-rms are averaged. Inverse
- * weights are averaged and divided by number of combined frames to track
- * reduction in variance. Metadata from the first frame is passed on and that
- * of the others discarded.
- * Will throw an exception if more than one frequency is found in the stream.
+ * For each product, V = sum(N_i V_i) / sum(N_i). With independent input-frame
+ * errors and supplied inverse variances w_i, the output inverse variance is
+ * (sum N_i)^2 / sum(N_i^2 / w_i). Fringe phases enter the coefficients.
+ * A positive-count input with zero, negative or nonfinite precision makes that
+ * product's output precision unavailable (zero), while its finite mean remains
+ * supported. Zero-count payload is unused, including nonfinite values.
+ * Nonfinite supported visibility/eigen data is rejected.
  *
- * @par Buffers
- * @buffer in_buf The kotekan buffer of the incoming single-frequency stream.
- *     @buffer_format VisBuffer structured
- *     @buffer_metadata VisMetadata
- * @buffer out_buf The kotekan buffer into which low cadence stream is fed.
- *     @buffer_format VisBuffer structured
- *     @buffer_metadata VisMetadata
+ * Matching FullUpperTri N2 buffers are required. FPGA intervals and input
+ * indices must be continuous; frequency, telescope time and EOP identities are
+ * checked. Dataset/RFI policy and supported flags/gains/eigenmethod may not
+ * change inside a bin. Bins include the Earth-rotation number. Initial and final
+ * partial bins are discarded. time_center_eop describes the actual interval
+ * midpoint; bin_eop and local ERA edges describe the nominal output bin.
  *
- * @conf  num_samples  Int. The number of time frames to average.
- * @conf  max_age      Float. How old can a frame be in seconds before it is dropped.
- *                     Default is 120 (i.e. two minutes).
- * @conf  do_fringestop  Bool. Whether to apply fringestopping phases before averaging.
+ * Scalar counts represent common support. With support_mode=per_product_v1,
+ * valid_fpga_ticks supplies counts separately by product and scalar count/loss
+ * fields are unavailable (zero). The output preserves authoritative per-product
+ * counts. Cross-frame covariance is not available and is not inferred.
+ * Scalar eigen diagnostics retain the count-weighted convention; per-product
+ * eigen/radiometer diagnostics are marked unavailable rather than inventing a
+ * common count. Other diagnostics come from the first supported frame.
  *
- * @metric  kotekan_timedownsample_skipped_frame_total
- *      The number of frames skipped entirely because they were too old.
- *
- * @author  Geoffrey Ryan & Tristan Pinsonneault-Marotte
- *
+ * @buffer in_buf FullUpperTri N2 frames with N2Metadata.
+ * @buffer out_buf Matching FullUpperTri N2 frames with N2Metadata.
+ * @conf num_bins_per_rotation Positive number of output bins per rotation.
+ * @conf max_age Positive finite maximum accumulated span in seconds (default 120).
+ * @conf do_fringestop Apply phases to the output bin center (default true).
+ * @conf num_elements Number of inputs, matching the descriptor.
  */
 class N2TimeDownsample : public kotekan::Stage {
-
 public:
-    /// Default constructor, loads config params.
     N2TimeDownsample(kotekan::Config& config, const std::string& unique_name,
                      kotekan::bufferContainer& buffer_container);
-
-    /// Main loop for the stage
     void main_thread() override;
 
 private:
-    // Frame parameters
-    size_t num_elements, num_eigenvectors;
-    size_t nprod;
-
-    // Number of accumulations per Earth rotation (sidereal day).
-    // e.g. 360 will average the incoming stream over one degree of rotation
-    // (4 sidereal minutes)
+    size_t num_elements, num_eigenvectors, nprod;
     uint32_t num_bins_per_rotation;
-
-    // Maximum age of data
     float max_age;
-
-    // Whether to apply fringestopping phases.
     bool do_fringestop;
-
-    // Feed positions in grid frame
     std::vector<vec3d_t> feed_positions_m;
-
-    // Buffers
     Buffer* in_buf;
     Buffer* out_buf;
 };

@@ -79,8 +79,11 @@ Both `cudaCorrelator` and `cudaPL1bitCorrelator` consume the merged GPU mask;
 DTV powers and the merged applied mask have distinct recording products. The
 existing count consumer receives counts after both DTV/RFI gating and packet
 loss; normalizing against nominal time would be incorrect. Zero counts denote
-unmeasured products. Final accumulated visibility normalization/variance under
-this path remains an additional acceptance check.
+unmeasured products. The scalar CPU accumulator now has a separate
+[normalization contract and regression](n2_mask_normalization.md): usable
+positive-support variance pairs, widened count arithmetic, sample/FPGA-tick
+separation and explicit support/identity checks. The complete GPU-to-accumulator
+replay remains an additional acceptance check.
 
 ```sh
 python -m pytest tests/test_dtv_rfi_mask.py -q

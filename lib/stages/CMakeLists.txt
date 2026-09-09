@@ -117,6 +117,7 @@ add_library(
     N2FrameToVisFrame.cpp
     RfiMaskSum.cpp
     DtvRfiMask.cpp
+    DtvInputHealth.cpp
     RfiFrameMask.cpp
     CountLostPLSamplesScalar.cpp
     PLMaskExpandedToCompact.cpp

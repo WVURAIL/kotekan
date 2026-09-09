@@ -23,3 +23,13 @@ snippet.
 
 See ``tests/boost/test_hdf5N2Write.cpp`` for end-to-end expectations and file
 layout checks.
+
+Per-product support opt-in
+==========================
+
+Set ``support_mode: per_product_v1`` only when the upstream N2 descriptor uses
+that mode. The writer emits ``CHORD_0.1`` files with exact per-product valid
+FPGA-tick counts, explicit unavailable scalar/loss-reason attributes, and no
+legacy scalar count/fraction datasets. The default ``scalar`` mode retains
+``CHORD_0.0``. Input and configured modes must match; see
+:ref:`n2_vis_file_format` for the complete versioned contract.
