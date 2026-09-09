@@ -50,8 +50,10 @@ if(HDF5_FOUND
    AND HDF5Plugin_PLUGIN_DIR)
     target_sources(kotekan_utils PRIVATE visFileH5.cpp visFileArchive.cpp HFBFileArchive.cpp)
     target_include_directories(kotekan_utils SYSTEM INTERFACE ${HDF5_INCLUDE_DIRS})
-    target_link_libraries(kotekan_utils PRIVATE HighFive::HighFive ${HDF5_HL_LIBRARIES}
-                                                ${HDF5_LIBRARIES})
+    target_link_libraries(
+        kotekan_utils
+        PUBLIC HighFive::HighFive
+        PRIVATE ${HDF5_HL_LIBRARIES} ${HDF5_LIBRARIES})
 endif()
 
 # Libevent core/extra&pthreads is required for the restClient
