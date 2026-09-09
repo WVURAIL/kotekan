@@ -33,8 +33,10 @@ jobs:
           python-version: '3.12'
       - name: Install CPU test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          test -f /etc/apt/sources.list.d/ubuntu.sources
+          apt_sources=(-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
+          sudo apt-get "${apt_sources[@]}" update
+          sudo apt-get "${apt_sources[@]}" install -y --no-install-recommends \
             build-essential ccache cmake pkg-config libevent-dev libssl-dev \
             libnuma-dev libfftw3-dev libhdf5-dev libboost-filesystem-dev \
             libboost-system-dev libboost-test-dev
