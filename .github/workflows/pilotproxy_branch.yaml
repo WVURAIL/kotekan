@@ -40,9 +40,9 @@ jobs:
             build-essential ccache cmake pkg-config libevent-dev libssl-dev \
             libnuma-dev libfftw3-dev libhdf5-dev libboost-filesystem-dev \
             libboost-system-dev libboost-test-dev
-          python -m pip install \
-            numpy astropy h5py hdf5plugin bitshuffle mpmath posix_ipc \
-            flask requests jinja2 pyyaml pytest pytest-localserver pytest-timeout
+          python -m pip install -r python/requirements.txt \
+            astropy hdf5plugin bitshuffle mpmath flask \
+            pytest pytest-localserver pytest-timeout
       - name: Check out HighFive
         uses: actions/checkout@v6
         with:
@@ -57,7 +57,8 @@ jobs:
             -DHIGHFIVE_UNIT_TESTS=OFF -DHIGHFIVE_EXAMPLES=OFF \
             -DHIGHFIVE_BUILD_DOCS=OFF
           cmake --install build/highfive-build
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
+        id: compiler-cache
         with:
           path: .ccache
           key: pilotproxy-cpu-${{ runner.os }}-${{ github.sha }}
@@ -75,6 +76,11 @@ jobs:
             -DUSE_JULIA=OFF -DUSE_DPDK=OFF -DUSE_LTO=OFF \
             -DWITH_TESTS=ON -DWITH_BOOST_TESTS=ON
           cmake --build "$KOTEKAN_BUILD_DIRNAME" --parallel 4
+      - name: Save compiler cache
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - name: Run normalization and framing regressions
         run: |
           export PYTHONPATH="$GITHUB_WORKSPACE/python"
