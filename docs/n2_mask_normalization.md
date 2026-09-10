@@ -55,13 +55,15 @@ time metadata. Correlation frames must be globally aligned to their configured
 frame span and consecutive; missing, duplicate, shifted or reordered input
 must not reuse a saved even frame. Tick conversions are checked for overflow.
 
-Only scalar support across inputs is implemented. Every actual lower-triangle
-entry in the count matrix must agree and lie in
-`[0, sub_integration_ntime]`; redundant upper entries of diagonal tiles are
-ignored. Diagnostic loss counts must be in range and output totals consistent.
-Different per-baseline supports are refused, not normalized using the first
-baseline's count. Implementing that case requires per-baseline counts,
-normalization, variance and output metadata together.
+The default scalar-support mode requires every actual lower-triangle entry
+in the count matrix to agree and lie in `[0, sub_integration_ntime]`;
+redundant upper entries of diagonal tiles are ignored. Diagnostic loss counts
+must be in range and output totals consistent. Different per-baseline supports
+are refused in scalar mode. The optional `packet_loss_is_scalar: false` mode
+uses actual joint counts, normalization and variance separately for each
+product, with an explicit `per_product_v1` output descriptor; see
+[n2_per_product_support.md](n2_per_product_support.md). This mode is not
+enabled in production, and scalar loss-reason counts remain unavailable there.
 
 ## Reproduce the CPU regression
 
@@ -99,8 +101,15 @@ build identities, and a before/after figure. This is local implementation
 validation. GPU-to-accumulator replay, full shared-GPU timing, telescope
 calibration, reason-coded input health and shadow operation remain pending.
 
-`N2TimeDownsample` is a separate downstream stage with an unresolved
-zero-weight/nominal-frame normalization issue. The direct fengine output
-configuration does not invoke it; do not assume this change validates paths
-that add that stage. Existing int32 visibility accumulation and per-pair
-fringestop rounding are also outside this change's arithmetic scope.
+`N2TimeDownsample` has separate deterministic CPU validation of count-weighted
+means, propagated independent-frame variance and unavailable-precision
+handling, including the optional per-product mode; see
+[n2_time_downsample_normalization.md](n2_time_downsample_normalization.md).
+The direct fengine output configuration does not invoke it. These arithmetic
+checks alone do not establish ensemble precision. The separate
+[composed CPU study](N2_COMPOSED_PRECISION.md) checks the two stages together
+by replaying the accumulator's native output through the downsampler. Its
+16 declared comparisons pass for independent synthetic voltages and
+voltage-independent masks. Physical inter-frame covariance and jointly
+scheduled operation remain unqualified. Existing int32 visibility accumulation
+and per-pair fringestop rounding are also outside this change's arithmetic scope.
