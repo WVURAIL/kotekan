@@ -33,10 +33,12 @@ integer number of ticks per sample. The sample period and frequency order must
 stay fixed, and all five input streams must have matching time and frequency
 metadata. Correlation frames must be consecutive and start on a frame boundary.
 
-Within each subintegration and frequency, lower-triangular counts must be equal
-and between zero and `sub_integration_ntime`. The redundant upper entries in
-diagonal tiles are ignored. Unequal counts across products are rejected;
-`packet_loss_is_scalar: false` is not supported. The scalar N2 format is unchanged.
+Counts must be between zero and `sub_integration_ntime`. The redundant upper
+entries in diagonal tiles are ignored. In the default scalar mode, counts must
+also be equal across products within each subintegration and frequency. Unequal
+counts require `packet_loss_is_scalar: false`, `variance_mode: EvenOddPosDef`,
+and an output descriptor with `support_mode: per_product_v1`; see
+[per-product support](n2_per_product_support.md).
 
 ## Tests
 

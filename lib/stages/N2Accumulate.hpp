@@ -75,7 +75,9 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  *
  * Input streams must have matching time and frequency metadata and a fixed integer number
  * of FPGA ticks per voltage sample. Frames must be consecutive and start on a frame boundary.
- * Counts must be equal across products and between zero and the subintegration length.
+ * Counts must be between zero and the subintegration length; redundant upper entries are ignored.
+ * Scalar mode requires equal counts across products. Unequal counts require per_product_v1
+ * output and EvenOddPosDef; scalar loss diagnostics are unavailable in this mode.
  * Normalization uses voltage samples; timing and output counts use FPGA ticks.
  *
  * VARIANCE ESTIMATION
@@ -153,8 +155,9 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  *                                          matrix) is a scalar in dish element or not.  If so,
  *                                          all baselines use the same value from `counts`, the
  *                                          first element in the buffer. Lower-triangular counts
- *                                          must be equal and in range. The `false` case is not
- *                                          implemented.
+ *                                          must be equal and in range. The `false` case requires
+ *                                          per_product_v1 output. Scalar loss counts are checked
+ *                                          but cannot give per-product loss reasons.
  * @conf    samples_per_data_set            int64_t Total number of time samples covered by each
  *                                          input frame. nt_outer in n2k.
  * @conf    sub_integration_ntime           int64_t Number of time samples integrated in each
@@ -294,6 +297,17 @@ private:
     int64_t _n2k_counts_lin_blocks;   ///< Linear number of blocks in the counts matrix
     int64_t _n2k_counts_num_blocks;   ///< Total number of blocks in the counts matrix
     int64_t _n2k_counts_num_products; ///< Total number of products in n2k's counts matrix
+
+    // Per-product accumulators use native blocked product order.
+    std::vector<std::complex<double>> _product_sum;
+    std::vector<double> _product_q;
+    std::vector<uint64_t> _product_n, _product_k;
+    std::vector<int64_t> _count_index_for_product;
+    void accum_per_product(int64_t f, const int32_t* corr0, const int32_t* corr1,
+                           const int32_t* counts0, const int32_t* counts1, double freq_MHz,
+                           EOP& target, EOP& eop0, EOP& eop1,
+                           std::vector<std::complex<float>>& phase0,
+                           std::vector<std::complex<float>>& phase1);
 
     // The below vectors are initialized in the constructor after _num_vis_products
     // and _num_freq_in_frame are known.
