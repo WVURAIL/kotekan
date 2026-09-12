@@ -52,6 +52,64 @@ Earth-Rotation-Angle (ERA) grid (``bin_in_ERA: true``, with
 ``num_bins_per_rotation`` bins per Earth rotation and bin 0 starting at
 ERA = 0 just before 2000 Jan 1 noon).
 
+Versioned per-product support (CHORD_0.1)
+=========================================
+
+The default ``support_mode: scalar`` preserves the existing ``CHORD_0.0``
+file format documented in the tables below. Explicitly configuring the writer
+with ``support_mode: per_product_v1`` requires the matching input descriptor
+and writes ``version = "CHORD_0.1"``. A mismatch is rejected before frame data
+are written. Files cannot mix support modes.
+
+The new version retains the visibility, weight, product index, timing,
+configuration and ``frames_added`` datasets, with these support differences:
+
+.. list-table:: Per-product schema additions
+   :header-rows: 1
+   :widths: 30 25 45
+
+   * - Name
+     - Shape / type
+     - Meaning
+   * - ``support_mode`` attribute
+     - string
+     - ``per_product_v1``
+   * - ``scalar_support_availability`` attribute
+     - string
+     - ``unavailable``
+   * - ``loss_reason_availability`` attribute
+     - string
+     - ``unavailable``; no per-product PL/RFI split is supplied
+   * - ``support_units`` attribute
+     - string
+     - ``fpga_ticks``
+   * - ``valid_fpga_count_per_product``
+     - :math:`(N_f, N_p, N_t)`, uint64
+     - Exact valid support for each visibility product; axes
+       ``frequency, product, time``
+
+The count dataset is at the root in CHORD file mode and under ``/flags`` in
+CHIME file mode, matching the location of ``vis_weight``. Its product order
+is exactly the order used by ``vis`` and ``index_map/prod``. Counts are integer
+FPGA ticks, not floating fractions, and cannot exceed the corresponding
+``frame_length_fpga_ticks``. Support may be positive while the inverse-variance
+weight is zero when no usable variance estimate exists.
+
+Legacy ``valid_fpga_count``, ``pl_fpga_count``, ``rfi_fpga_count``,
+``rfi_only_fpga_count``, ``frac_lost``, ``frac_pl``, ``frac_rfi`` and
+``frac_rfi_only`` datasets are **absent** in CHORD_0.1. The old scalar metadata
+slots must be zero in the incoming versioned frame, meaning unavailable rather
+than measured zero. No scalar support fraction or per-product loss-reason
+fraction is fabricated. The upstream RFI configuration metadata still describes
+the configured detector and is not a measurement of per-product losses.
+
+Missing file slots retain zero product counts and zero visibilities/weights;
+``frames_added(f,t)`` distinguishes a missing input frame from a received
+frame containing an unsupported product. These counts specify usable support,
+not a physical noise calibration or a measured filter-transfer function.
+Consumers must check the version and support mode instead of assuming the
+CHORD_0.0 scalar dataset contract.
+
 Directory layout and file naming
 ================================
 

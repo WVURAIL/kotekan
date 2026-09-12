@@ -73,9 +73,24 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * arrays (ie. round robin).  The output stream will see frames in the order: [T0F0 T0F1 T0F2 T1F0
  * T1F1 T1F2 ...]
  *
+ * Incoming correlation/count/mask streams must have matching coarse-frequency coordinates
+ * and time downsampling. The metadata correlation period must be a positive integer multiple
+ * of sub_integration_ntime; this defines FPGA ticks per voltage sample. That factor and the
+ * frequency order are frozen on first input. Correlation frames must be consecutive at the
+ * configured sample count times that tick factor. Every frame must start on that global
+ * frame grid; shifted frames, gaps and duplicates are refused to preserve absolute even/odd
+ * pairing. Visibility/count arithmetic remains in voltage
+ * samples, while bin/EOP timing and exported count metadata use FPGA ticks.
+ * The scalar packet-loss mode is checked against every true lower-triangular count entry.
+ * Scalar mode refuses unequal support. Matrix mode requires the explicit per_product_v1
+ * output descriptor and EvenOddPosDef; it writes exact joint valid counts per product.
+ * Scalar PL/RFI diagnostics are unavailable in matrix mode. Counts outside
+ * [0, sub_integration_ntime] are refused in both modes.
+ * Redundant upper entries in diagonal blocked tiles are ignored.
+ *
  * VARIANCE ESTIMATION
  *
- * The output N2FrameViews include the visibility matrix (normalized by the number of good fpga
+ * The output N2FrameViews include the visibility matrix (normalized by the number of good voltage
  * samples in the accumulation) and the `weights`: the reciprocal of the estimated variance of the
  * visibilities.  Because the visibilities may have a linear drift (due to fringes, etc) we cannot
  * use the standard estimator, we want to measure the variance of the visibility apart from linear
@@ -97,10 +112,22 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * is positive definite.
  *
  * The "EvenOddPosDef" estimator differences normalized visibility samples and accounts for the
- * number of samples in each. It produces an unbiased estimate of the variance and is positive
- * definite, it only produces 0 if the visibilities in each pair are identical or there are no
- * samples in the accumulation bin. On Gaussian data it has the same variance as the CHIMEv1
- * estimator.
+ * number of samples in each. For a pair with positive counts n0 and n1, its contribution is
+ * Q_pair = n0*n1/(n0+n1) * |corr1/n1 - corr0/n0|^2. Let Q be the sum of these contributions,
+ * k the number of admitted pairs with both counts positive, and N the total admitted valid
+ * sample count. The estimated variance of the accumulated mean is Q/(k*N); the output weight
+ * is k*N/Q. A one-sided pair still contributes its supported samples to the visibility and N,
+ * but contributes neither Q nor k. Pairs rejected by the second-stage frame mask contribute
+ * to neither the visibility nor the variance estimate.
+ *
+ * This variance estimate assumes independent sample errors, a common per-sample variance
+ * for this product across the accumulation, and equal expected normalized visibility within
+ * each differenced pair after any fringestopping. Under these assumptions Q/k estimates that
+ * common variance. The inverse of an estimated variance is not itself an unbiased precision
+ * estimate. Data-dependent excision can violate these assumptions; this normalization is not
+ * a physical noise or science-transfer calibration. Zero support, no usable differences, zero
+ * Q, or non-finite Q/weight produces zero weight (unavailable precision), even when the
+ * accumulated visibility has support.
  *
  * TODO:    - radiometer_chi2
  *
@@ -144,8 +171,11 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * @conf    packet_loss_is_scalar           bool    Whether the packet loss (ie. the counts
  *                                          matrix) is a scalar in dish element or not.  If so,
  *                                          all baselines use the same value from `counts`, the
- *                                          first element in the buffer. The `false` case has
- *                                          not been implemented.
+ *                                          first element in the buffer. Every science entry
+ *                                          is checked for equality and valid range; the
+ *                                          `false` case requires per_product_v1 output.
+ *                                          Scalar loss-reason inputs are synchronized and
+ *                                          checked but not promoted to per-product reasons.
  * @conf    samples_per_data_set            int64_t Total number of time samples covered by each
  *                                          input frame. nt_outer in n2k.
  * @conf    sub_integration_ntime           int64_t Number of time samples integrated in each
@@ -248,9 +278,13 @@ private:
 
     const bool _packet_loss_is_scalar;
 
-    const int64_t _n_fpga_samples_per_n2k_frame;
-    const int64_t _n_fpga_samples_per_n2k_correlation;
+    const int64_t _n_samples_per_n2k_frame;
+    const int64_t _n_samples_per_n2k_correlation;
     int64_t _n_integrations_per_n2k_frame;
+    int64_t _fpga_ticks_per_sample = 0; ///< Frozen from first input metadata
+    int64_t _fpga_ticks_per_n2k_frame = 0;
+    int64_t _fpga_ticks_per_n2k_correlation = 0;
+    std::vector<int> _coarse_freq_order; ///< Frozen identity across accumulation frames
 
     const int64_t _num_polarizations; ///< Total number of telescope elements (~2 * num dishes)
     const int64_t _num_dishes;        ///< Total number of telescope elements (~2 * num dishes)
@@ -282,13 +316,27 @@ private:
     int64_t _n2k_counts_num_blocks;   ///< Total number of blocks in the counts matrix
     int64_t _n2k_counts_num_products; ///< Total number of products in n2k's counts matrix
 
+    // Per-product support uses the same native blocked product order internally.
+    // Only this explicit mode consumes heterogeneous counts; legacy scalar bytes
+    // and diagnostics retain their existing contract.
+    std::vector<std::complex<double>> _product_sum;
+    std::vector<double> _product_q;
+    std::vector<uint64_t> _product_n, _product_k;
+    std::vector<int64_t> _count_index_for_product;
+    void accum_per_product(int64_t f, const int32_t* corr0, const int32_t* corr1,
+                           const int32_t* counts0, const int32_t* counts1, double freq_MHz,
+                           EOP& target, EOP& eop0, EOP& eop1,
+                           std::vector<std::complex<float>>& phase0,
+                           std::vector<std::complex<float>>& phase1);
+
     // The below vectors are initialized in the constructor after _num_vis_products
     // and _num_freq_in_frame are known.
     std::vector<int32_t> _vis;
     std::vector<float> _var;
-    // number of fpga samples, per frequency, in frame
-    std::vector<int32_t> _n_valid_fpga_samples_in_vis;
+    // Number of admitted voltage samples, per frequency, in the accumulation.
+    std::vector<int64_t> _n_valid_samples_in_vis;
     std::vector<float> _n_valid_sample_diff_sq_sum;
+    std::vector<int64_t> _n_usable_variance_pairs; ///< Admitted pairs with two positive counts
     std::vector<uint64_t> _n_rfi_samples_in_vis;
     std::vector<uint64_t> _n_pl_samples_in_vis;
     int64_t _vis_samples_in_out_frame;

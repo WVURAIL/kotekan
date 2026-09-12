@@ -43,6 +43,7 @@ public:
 
     /// Layout of the visibility matrix
     const N2Layout n2_layout;
+    const kotekan::N2SupportMode support_mode;
     /// Number of elements for data in buffer
     const uint32_t num_elements;
     /// Number of products for data in buffer
@@ -121,6 +122,8 @@ public:
     /// writes it but N2Accumulate's fill of 255, no consumer interprets it, and
     /// no convention has been settled for it. Bad feeds live in `flags`.
     const gsl_lite::span<uint8_t> mask;
+    /// Authoritative support in descriptor product order, empty in legacy scalar mode.
+    const gsl_lite::span<uint64_t> valid_fpga_ticks;
 
     /**
      * @brief Create view without modifying layout.
@@ -130,7 +133,7 @@ public:
      * @param buf      The buffer the frame is in.
      * @param frame_id The id of the frame to read.
      */
-    N2FrameView(Buffer* buf, int frame_id);
+    N2FrameView(Buffer* buf, int frame_id, bool allow_per_product = false);
 
     size_t data_size() const override;
     void zero_frame() override;
@@ -155,7 +158,7 @@ public:
      *
      **/
     static N2FrameView copy_frame(Buffer* buf_src, int frame_id_src, Buffer* buf_dest,
-                                  int frame_id_dest);
+                                  int frame_id_dest, bool allow_per_product = false);
 
     /**
      * @brief Copy over the data, skipping specified members.
