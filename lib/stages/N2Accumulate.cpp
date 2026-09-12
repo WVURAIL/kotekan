@@ -31,6 +31,7 @@
 #include <cmath>      // for isfinite
 #include <complex>    // for complex, operator*, conj, operator-, norm
 #include <functional> // for bind, function, placeholders
+#include <limits>     // for numeric_limits
 #include <math.h>     // for floor
 #include <memory>     // for shared_ptr, __shared_ptr_access, dynamic_pointer_cast
 #include <ostream>    // for ostream, basic_ostream
@@ -38,8 +39,9 @@
 #ifdef WITH_OMP
 #include <omp.h>
 #endif
-#include <time.h> // for timespec, size_t
-#include <vector> // for vector
+#include <time.h>  // for timespec, size_t
+#include <utility> // for pair
+#include <vector>  // for vector
 
 
 using namespace std::placeholders;
@@ -69,8 +71,8 @@ N2Accumulate::N2Accumulate(Config& config, const std::string& unique_name,
         config.get_default<int64_t>(unique_name, "num_subintegrations_per_bin", 0)),
     _num_bins_per_rotation(config.get_default<uint32_t>(unique_name, "num_bins_per_rotation", 0)),
     _packet_loss_is_scalar(config.get<bool>(unique_name, "packet_loss_is_scalar")),
-    _n_fpga_samples_per_n2k_frame(config.get<int64_t>(unique_name, "samples_per_data_set")),
-    _n_fpga_samples_per_n2k_correlation(config.get<int64_t>(unique_name, "sub_integration_ntime")),
+    _n_samples_per_n2k_frame(config.get<int64_t>(unique_name, "samples_per_data_set")),
+    _n_samples_per_n2k_correlation(config.get<int64_t>(unique_name, "sub_integration_ntime")),
     _num_polarizations(config.get<int64_t>(unique_name, "num_polarizations")),
     _num_dishes(config.get<int64_t>(unique_name, "num_dishes")),
     _num_elements(_num_polarizations * _num_dishes),
@@ -145,15 +147,15 @@ N2Accumulate::N2Accumulate(Config& config, const std::string& unique_name,
                 "N2Accumulate configured to use packet loss matrix, which is not implemented.");
 
         // sampling information
-        if (!(_n_fpga_samples_per_n2k_frame > 0))
-            FATAL_ERROR("samples_per_data_set is not positve: {:d}", _n_fpga_samples_per_n2k_frame);
-        if (!(_n_fpga_samples_per_n2k_correlation > 0))
+        if (!(_n_samples_per_n2k_frame > 0))
+            FATAL_ERROR("samples_per_data_set is not positve: {:d}", _n_samples_per_n2k_frame);
+        if (!(_n_samples_per_n2k_correlation > 0))
             FATAL_ERROR("sub_integration_ntime is not positve: {:d}",
-                        _n_fpga_samples_per_n2k_correlation);
-        if (!(_n_fpga_samples_per_n2k_frame % _n_fpga_samples_per_n2k_correlation == 0))
+                        _n_samples_per_n2k_correlation);
+        if (!(_n_samples_per_n2k_frame % _n_samples_per_n2k_correlation == 0))
             FATAL_ERROR(
                 "samples_per_data_set ({:d}) is not a multiple of sub_integration_ntime ({:d})",
-                _n_fpga_samples_per_n2k_frame, _n_fpga_samples_per_n2k_correlation);
+                _n_samples_per_n2k_frame, _n_samples_per_n2k_correlation);
 
         // Number of elements (polarization x dish) in the array.
         if (_num_elements <= 0)
@@ -173,11 +175,10 @@ N2Accumulate::N2Accumulate(Config& config, const std::string& unique_name,
     // Compute derived quantities
     {
         // number of "integrations" (coarse time samples) per n2k (gpu) frame
-        _n_integrations_per_n2k_frame =
-            _n_fpga_samples_per_n2k_frame / _n_fpga_samples_per_n2k_correlation;
-        assert(_n_fpga_samples_per_n2k_frame % _n_fpga_samples_per_n2k_correlation == 0
-               && "_n_fpga_samples_per_n2k_frame must be a multiple of "
-                  "_n_fpga_samples_per_n2k_correlation");
+        _n_integrations_per_n2k_frame = _n_samples_per_n2k_frame / _n_samples_per_n2k_correlation;
+        assert(_n_samples_per_n2k_frame % _n_samples_per_n2k_correlation == 0
+               && "_n_samples_per_n2k_frame must be a multiple of "
+                  "_n_samples_per_n2k_correlation");
 
         // sizes for blocked input correlation matrix
         _n2k_correlation_lin_blocks = kotekan::div_ceil(_num_elements, _n2k_correlation_blocksize);
@@ -210,8 +211,8 @@ N2Accumulate::N2Accumulate(Config& config, const std::string& unique_name,
     _var = std::vector<float>(_num_freq_per_n2k_frame * _n2k_correlation_num_products,
                               0.0f); // real-valued variance estimates
 
-    // number of fpga samples, per frequency, in frame
-    _n_valid_fpga_samples_in_vis = std::vector<int64_t>(_num_freq_per_n2k_frame, 0);
+    // Accepted voltage samples per frequency in the accumulation.
+    _n_valid_samples_in_vis = std::vector<int64_t>(_num_freq_per_n2k_frame, 0);
     _n_valid_sample_diff_sq_sum = std::vector<float>(_num_freq_per_n2k_frame, 0);
     _n_usable_variance_pairs = std::vector<int64_t>(_num_freq_per_n2k_frame, 0);
     _n_rfi_samples_in_vis = std::vector<uint64_t>(_num_freq_per_n2k_frame, 0);
@@ -227,27 +228,26 @@ N2Accumulate::N2Accumulate(Config& config, const std::string& unique_name,
         {_n_integrations_per_n2k_frame, _num_freq_per_n2k_frame, _n2k_correlation_num_blocks,
          _n2k_correlation_blocksize, _n2k_correlation_blocksize, 2},
         {"Tc", "F", "DPhi", "DPlo1", "DPlo2", "C"},
-        {_n_fpga_samples_per_n2k_correlation, 1, 16, 1, 1, 1}));
+        {_n_samples_per_n2k_correlation, 1, 16, 1, 1, 1}));
 
     in_counts_buf->require_frame_desc(kotekan::GenericNDArray::describe(
         kotekan::int32, "n2k_counts",
         {_n_integrations_per_n2k_frame, _num_freq_per_n2k_frame, _n2k_counts_num_blocks,
          _n2k_counts_blocksize, _n2k_counts_blocksize},
-        {"Tc", "F", "D8Phi", "D8Plo1", "D8Plo2"},
-        {_n_fpga_samples_per_n2k_correlation, 1, 64, 8, 8}));
+        {"Tc", "F", "D8Phi", "D8Plo1", "D8Plo2"}, {_n_samples_per_n2k_correlation, 1, 64, 8, 8}));
 
     in_rficounts_buf->require_frame_desc(kotekan::GenericNDArray::describe(
         kotekan::int32, "RFImask_counts", {_n_integrations_per_n2k_frame, _num_freq_per_n2k_frame},
-        {"Tc", "F"}, {_n_fpga_samples_per_n2k_correlation, 1}));
+        {"Tc", "F"}, {_n_samples_per_n2k_correlation, 1}));
 
     in_plcounts_buf->require_frame_desc(
         kotekan::GenericNDArray::describe(kotekan::int32, "pl_lost_counts_scalar",
                                           {_n_integrations_per_n2k_frame, _num_freq_per_n2k_frame},
-                                          {"Tc", "F"}, {_n_fpga_samples_per_n2k_correlation, 1}));
+                                          {"Tc", "F"}, {_n_samples_per_n2k_correlation, 1}));
 
     in_rfiframemask_buf->require_frame_desc(kotekan::GenericNDArray::describe(
         kotekan::uint8, "RFIFrameMask", {_n_integrations_per_n2k_frame, _num_freq_per_n2k_frame},
-        {"Tc", "F"}, {_n_fpga_samples_per_n2k_correlation, 1}));
+        {"Tc", "F"}, {_n_samples_per_n2k_correlation, 1}));
 
 
     // Validate that the output buffer's frame descriptor (set by bufferFactory) matches
@@ -296,6 +296,8 @@ void N2Accumulate::main_thread() {
     int previous_in_rficounts_frame_id = -1;
     int previous_in_plcounts_frame_id = -1;
     int previous_in_rfiframemask_frame_id = -1;
+    bool have_previous_seq = false;
+    int64_t previous_seq = 0;
 
     INFO("Accumulating GPU output for {:s}[{:d}] putting result in {:s}[{:d}]", in_buf->buffer_name,
          in_frame_id, out_buf->buffer_name, out_frame_id);
@@ -419,6 +421,136 @@ void N2Accumulate::main_thread() {
                         rfiframemask_metadata->get_fpga_seq_num());
         }
 
+        // Counts and masks must refer to the same times and frequencies as the correlations.
+        const std::array<std::pair<const char*, std::shared_ptr<chordMetadata>>, 5> stream_metadata{
+            {{"correlation", frame_metadata},
+             {"counts", counts_metadata},
+             {"RFI counts", rficounts_metadata},
+             {"packet-loss counts", plcounts_metadata},
+             {"RFI frame mask", rfiframemask_metadata}}};
+        for (const auto& stream : stream_metadata) {
+            if (!stream.second->has_coarse_freq()) {
+                FATAL_ERROR("N2Accumulate missing coarse-frequency metadata in {} stream",
+                            stream.first);
+            }
+            if (!stream.second->has_time_downsampling_fpga()) {
+                FATAL_ERROR("N2Accumulate missing time-downsampling metadata in {} stream",
+                            stream.first);
+            }
+        }
+        const auto frame_coarse_freq = frame_metadata->get_coarse_freq();
+        const int frame_time_downsampling = frame_metadata->get_time_downsampling_fpga();
+        if (frame_coarse_freq.size() != static_cast<size_t>(_num_freq_per_n2k_frame)) {
+            FATAL_ERROR("N2Accumulate coarse-frequency length mismatch: got {}, expected {}",
+                        frame_coarse_freq.size(), _num_freq_per_n2k_frame);
+        }
+        for (const auto& stream : stream_metadata) {
+            if (stream.second->get_coarse_freq() != frame_coarse_freq) {
+                FATAL_ERROR("N2Accumulate coarse-frequency mismatch in {} stream", stream.first);
+            }
+            if (stream.second->get_time_downsampling_fpga() != frame_time_downsampling) {
+                FATAL_ERROR("N2Accumulate time-downsampling mismatch in {} stream", stream.first);
+            }
+        }
+
+        if (frame_time_downsampling <= 0
+            || frame_time_downsampling % _n_samples_per_n2k_correlation != 0) {
+            FATAL_ERROR("N2Accumulate invalid voltage sample period: correlation period {} is not "
+                        "a positive integer multiple of {} voltage samples",
+                        frame_time_downsampling, _n_samples_per_n2k_correlation);
+        }
+        const int64_t ticks_per_sample = frame_time_downsampling / _n_samples_per_n2k_correlation;
+        if (_fpga_ticks_per_sample == 0) {
+            if (_n_samples_per_n2k_frame > std::numeric_limits<int64_t>::max() / ticks_per_sample) {
+                FATAL_ERROR("N2Accumulate FPGA frame tick span overflow");
+            }
+            _fpga_ticks_per_sample = ticks_per_sample;
+            _fpga_ticks_per_n2k_frame = _n_samples_per_n2k_frame * ticks_per_sample;
+            _fpga_ticks_per_n2k_correlation = frame_time_downsampling;
+            if (!_bin_in_ERA
+                && _num_subintegrations_per_bin
+                       > std::numeric_limits<int64_t>::max() / _fpga_ticks_per_n2k_correlation) {
+                FATAL_ERROR("N2Accumulate FPGA accumulation tick span overflow");
+            }
+            _coarse_freq_order = frame_coarse_freq;
+        } else {
+            if (ticks_per_sample != _fpga_ticks_per_sample) {
+                FATAL_ERROR(
+                    "N2Accumulate voltage sample period changed between correlation frames");
+            }
+            if (frame_coarse_freq != _coarse_freq_order) {
+                FATAL_ERROR(
+                    "N2Accumulate coarse-frequency order changed between correlation frames");
+            }
+        }
+
+        // The even frame may be saved for the next iteration, so frames must be consecutive.
+        const int64_t frame_seq = frame_metadata->get_fpga_seq_num();
+        if (frame_seq < 0
+            || frame_seq > std::numeric_limits<int64_t>::max() - _fpga_ticks_per_n2k_frame) {
+            FATAL_ERROR("N2Accumulate invalid correlation frame FPGA tick range");
+        }
+        // Even/odd pairing requires frames to start on the global frame grid.
+        if (frame_seq % _fpga_ticks_per_n2k_frame != 0) {
+            FATAL_ERROR("N2Accumulate unaligned correlation frame: sequence {} is not a multiple "
+                        "of frame span {} FPGA ticks",
+                        frame_seq, _fpga_ticks_per_n2k_frame);
+        }
+        if (have_previous_seq
+            && (previous_seq > std::numeric_limits<int64_t>::max() - _fpga_ticks_per_n2k_frame
+                || frame_seq != previous_seq + _fpga_ticks_per_n2k_frame)) {
+            FATAL_ERROR("N2Accumulate nonconsecutive correlation frame: previous {}, current {}, "
+                        "required increment {}",
+                        previous_seq, frame_seq, _fpga_ticks_per_n2k_frame);
+        }
+        previous_seq = frame_seq;
+        have_previous_seq = true;
+
+        // Check that lower-triangular counts are equal and in range.
+        // The upper entries in diagonal tiles are redundant.
+        for (int64_t t = 0; t < _n_integrations_per_n2k_frame; ++t) {
+            for (int64_t f = 0; f < _num_freq_per_n2k_frame; ++f) {
+                const int64_t offset = t * counts_stride_t + f * counts_stride_f;
+                const int32_t scalar_count = counts_mat[offset];
+                const int64_t scalar_offset = t * _num_freq_per_n2k_frame + f;
+                const int32_t rfi_count = rficounts[scalar_offset];
+                const int32_t pl_count = plcounts[scalar_offset];
+                if (rfi_count < 0 || rfi_count > _n_samples_per_n2k_correlation || pl_count < 0
+                    || pl_count > _n_samples_per_n2k_correlation) {
+                    FATAL_ERROR("N2Accumulate diagnostic count out of range at subintegration {}, "
+                                "frequency {}",
+                                t, f);
+                }
+                int64_t block_idx = 0;
+                for (int64_t ihi = 0; ihi < _n2k_counts_lin_blocks; ++ihi) {
+                    for (int64_t jhi = 0; jhi <= ihi; ++jhi, ++block_idx) {
+                        for (int64_t ilo = 0; ilo < _n2k_counts_blocksize; ++ilo) {
+                            for (int64_t jlo = 0; jlo < _n2k_counts_blocksize; ++jlo) {
+                                if (ihi == jhi && jlo > ilo)
+                                    continue;
+                                const int64_t idx =
+                                    offset
+                                    + block_idx * _n2k_counts_blocksize * _n2k_counts_blocksize
+                                    + ilo * _n2k_counts_blocksize + jlo;
+                                const int32_t count = counts_mat[idx];
+                                if (count < 0 || count > _n_samples_per_n2k_correlation) {
+                                    FATAL_ERROR("N2Accumulate count out of range at subintegration "
+                                                "{}, frequency {}, count {} (allowed 0..{})",
+                                                t, f, count, _n_samples_per_n2k_correlation);
+                                }
+                                if (count != scalar_count) {
+                                    FATAL_ERROR("N2Accumulate requires scalar counts: differing "
+                                                "science entries at subintegration {}, frequency "
+                                                "{} ({} versus {})",
+                                                t, f, count, scalar_count);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Record the current frame time being processed.
         comp_time_seconds_metric.set(_tel.to_time_ns(frame_metadata->get_fpga_seq_num()) / 1e9);
 
@@ -427,7 +559,7 @@ void N2Accumulate::main_thread() {
         int64_t seq0 = frame_metadata->get_fpga_seq_num();
 
         // Absolute frame number for this frame (since frame 0)
-        int64_t in_frame_num = frame_metadata->get_fpga_seq_num() / _n_fpga_samples_per_n2k_frame;
+        int64_t in_frame_num = frame_metadata->get_fpga_seq_num() / _fpga_ticks_per_n2k_frame;
 
 
         // Do some first-time initialization
@@ -464,7 +596,7 @@ void N2Accumulate::main_thread() {
             int64_t t_abs = t + in_frame_num * _n_integrations_per_n2k_frame;
 
             // sequence number of this sample in the frame.
-            int64_t seq = seq0 + t * _n_fpga_samples_per_n2k_correlation;
+            int64_t seq = seq0 + t * _fpga_ticks_per_n2k_correlation;
 
             DEBUG("Frame: {0:d}  Sample {1:d}: {2:d} seq: {3:d}", in_frame_num, t, t_abs, seq);
 
@@ -525,11 +657,11 @@ void N2Accumulate::main_thread() {
             rfiframemask_t1 = rfiframemask + rfipl_offset_t;
 
             EOP eop_t0 =
-                _tel.get_EOP_at_time(_tel.to_time(seq - _n_fpga_samples_per_n2k_correlation / 2));
+                _tel.get_EOP_at_time(_tel.to_time(seq - _fpga_ticks_per_n2k_correlation / 2));
             EOP eop_t1 =
-                _tel.get_EOP_at_time(_tel.to_time(seq + _n_fpga_samples_per_n2k_correlation / 2));
+                _tel.get_EOP_at_time(_tel.to_time(seq + _fpga_ticks_per_n2k_correlation / 2));
 
-            int64_t n_samples_per_pair = 2 * _n_fpga_samples_per_n2k_correlation;
+            int64_t n_samples_per_pair = 2 * _n_samples_per_n2k_correlation;
 
 #ifdef WITH_OMP
 #pragma omp parallel for num_threads(_num_workers)
@@ -550,13 +682,13 @@ void N2Accumulate::main_thread() {
                 _n_rfi_samples_in_vis[f] +=
                     static_cast<uint64_t>(rficounts_t0[f]) + rficounts_t1[f];
 
-                // Fourth: Normalization - accum the remaining good ticks.
+                // Fourth: accumulate good voltage samples for normalization.
                 int64_t count_idx = f * counts_stride_f;
 
                 int32_t count_t0 = counts_mat_t0[count_idx];
                 int32_t count_t1 = counts_mat_t1[count_idx];
 
-                _n_valid_fpga_samples_in_vis[f] += static_cast<int64_t>(count_t0) + count_t1;
+                _n_valid_samples_in_vis[f] += static_cast<int64_t>(count_t0) + count_t1;
 
                 // Both frames need samples to estimate variance; either can contribute to the mean.
                 if (count_t0 > 0 && count_t1 > 0)
@@ -579,7 +711,7 @@ void N2Accumulate::main_thread() {
             _vis_samples_in_out_frame += 2;
 
             // Finalize accumulation if the next sample is in a new bin.
-            int64_t next_bin_idx = get_accum_abs_bin_idx(seq + _n_fpga_samples_per_n2k_correlation);
+            int64_t next_bin_idx = get_accum_abs_bin_idx(seq + _fpga_ticks_per_n2k_correlation);
             if (next_bin_idx != _accum_bin_idx) {
 
                 DEBUG("Finishing N2Accumulate output frame. Accumulated {:d} visibility samples.",
@@ -595,7 +727,7 @@ void N2Accumulate::main_thread() {
                 _vis_samples_in_out_frame = 0;
                 std::fill(_vis_input_frames_skipped_rfi.begin(),
                           _vis_input_frames_skipped_rfi.end(), 0);
-                _accum_fpga_start_tick = seq + _n_fpga_samples_per_n2k_correlation;
+                _accum_fpga_start_tick = seq + _fpga_ticks_per_n2k_correlation;
                 _accum_bin_idx = next_bin_idx;
                 target_eop = get_accum_bin_EOP(next_bin_idx);
             }
@@ -653,13 +785,13 @@ int64_t N2Accumulate::get_accum_abs_bin_idx(uint64_t seq) {
     if (_bin_in_ERA) {
 
         // number of ticks in an even/odd pair of samples
-        uint64_t ticks_per_sample_pair = 2 * _n_fpga_samples_per_n2k_correlation;
+        uint64_t ticks_per_sample_pair = 2 * _fpga_ticks_per_n2k_correlation;
 
         // the tick number for the start of the current even/odd pair
         uint64_t seq_start = (seq / ticks_per_sample_pair) * ticks_per_sample_pair;
 
         // sequence number for the center of the pair (the beginning of the odd sample)
-        uint64_t seq_cen = seq_start + _n_fpga_samples_per_n2k_correlation;
+        uint64_t seq_cen = seq_start + _fpga_ticks_per_n2k_correlation;
 
         // Get the instrument time at the center of the pair
         timespec t_inst = _tel.to_time(seq_cen);
@@ -669,7 +801,7 @@ int64_t N2Accumulate::get_accum_abs_bin_idx(uint64_t seq) {
 
     } else {
         int64_t fpga_ticks_per_accum =
-            _num_subintegrations_per_bin * _n_fpga_samples_per_n2k_correlation;
+            _num_subintegrations_per_bin * _fpga_ticks_per_n2k_correlation;
         int64_t idx = seq / fpga_ticks_per_accum;
 
         return idx;
@@ -694,7 +826,7 @@ EOP N2Accumulate::get_accum_bin_EOP(int64_t accum_bin_idx) {
 
         // extract the sequence number of the start of the bin
         int64_t fpga_ticks_per_accum =
-            _num_subintegrations_per_bin * _n_fpga_samples_per_n2k_correlation;
+            _num_subintegrations_per_bin * _fpga_ticks_per_n2k_correlation;
         uint64_t seq_start = static_cast<uint64_t>(accum_bin_idx) * fpga_ticks_per_accum;
 
         // sequence number at center of bin, we know fpga_ticks_per_accum is even
@@ -716,7 +848,7 @@ bool N2Accumulate::is_seq_start_of_bin(uint64_t seq, int64_t bin_idx) {
         // before frame 0.
 
         // number of ticks in an even/odd pair of samples
-        uint64_t ticks_per_sample_pair = 2 * _n_fpga_samples_per_n2k_correlation;
+        uint64_t ticks_per_sample_pair = 2 * _fpga_ticks_per_n2k_correlation;
         // the tick number for the start of the current even/odd pair
 
         if (seq % ticks_per_sample_pair != 0)
@@ -734,7 +866,7 @@ bool N2Accumulate::is_seq_start_of_bin(uint64_t seq, int64_t bin_idx) {
 
     } else {
         int64_t fpga_ticks_per_accum =
-            _num_subintegrations_per_bin * _n_fpga_samples_per_n2k_correlation;
+            _num_subintegrations_per_bin * _fpga_ticks_per_n2k_correlation;
 
         return (seq % fpga_ticks_per_accum == 0);
     }
@@ -871,7 +1003,16 @@ bool N2Accumulate::output_and_reset(frameID& in_frame_id, frameID& in_rfiframema
     std::shared_ptr<chordMetadata> rfiframemask_metadata =
         get_chord_metadata(in_rfiframemask_buf, in_rfiframemask_frame_id);
 
-    int64_t ticks_in_accum = _vis_samples_in_out_frame * _n_fpga_samples_per_n2k_correlation;
+    if (_vis_samples_in_out_frame < 0 || _fpga_ticks_per_n2k_correlation <= 0
+        || _vis_samples_in_out_frame
+               > std::numeric_limits<int64_t>::max() / _fpga_ticks_per_n2k_correlation) {
+        FATAL_ERROR("N2Accumulate FPGA output tick span overflow");
+    }
+    int64_t ticks_in_accum = _vis_samples_in_out_frame * _fpga_ticks_per_n2k_correlation;
+    if (_accum_fpga_start_tick > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
+                                     - static_cast<uint64_t>(ticks_in_accum)) {
+        FATAL_ERROR("N2Accumulate FPGA output end tick overflow");
+    }
 
     EOP eop_time_center =
         _tel.get_EOP_at_time(_tel.to_time(_accum_fpga_start_tick + ticks_in_accum / 2));
@@ -1003,11 +1144,25 @@ bool N2Accumulate::output_and_reset(frameID& in_frame_id, frameID& in_rfiframema
         meta->fpga_start_tick = _accum_fpga_start_tick;
         meta->frame_start_time_ns = accum_start_time_ns;
         meta->frame_length_fpga_ticks = ticks_in_accum;
-        meta->n_valid_fpga_ticks = _n_valid_fpga_samples_in_vis.at(f);
-        meta->n_rfi_fpga_ticks = _n_rfi_samples_in_vis.at(f);
+        // Convert sample counts to FPGA ticks for output metadata and metrics.
+        const auto count_ticks = [&](uint64_t count) -> uint64_t {
+            if (count > std::numeric_limits<uint64_t>::max()
+                            / static_cast<uint64_t>(_fpga_ticks_per_sample)) {
+                FATAL_ERROR("N2Accumulate count metadata tick overflow");
+            }
+            return count * static_cast<uint64_t>(_fpga_ticks_per_sample);
+        };
+        meta->n_valid_fpga_ticks = count_ticks(_n_valid_samples_in_vis.at(f));
+        meta->n_rfi_fpga_ticks = count_ticks(_n_rfi_samples_in_vis.at(f));
+        meta->n_pl_fpga_ticks = count_ticks(_n_pl_samples_in_vis.at(f));
+        if (meta->n_valid_fpga_ticks > static_cast<uint64_t>(ticks_in_accum)
+            || meta->n_pl_fpga_ticks
+                   > static_cast<uint64_t>(ticks_in_accum) - meta->n_valid_fpga_ticks
+            || meta->n_rfi_fpga_ticks > static_cast<uint64_t>(ticks_in_accum)) {
+            FATAL_ERROR("N2Accumulate inconsistent valid/packet-loss/RFI count totals");
+        }
         meta->n_rfi_only_fpga_ticks =
-            ticks_in_accum - _n_valid_fpga_samples_in_vis.at(f) - _n_pl_samples_in_vis.at(f);
-        meta->n_pl_fpga_ticks = _n_pl_samples_in_vis.at(f);
+            ticks_in_accum - meta->n_valid_fpga_ticks - meta->n_pl_fpga_ticks;
 
         meta->rfi_frame_excision_enabled = rfi_frame_excision_enabled;
         meta->rfi_frame_excision_num = num_thresholds;
@@ -1029,7 +1184,7 @@ bool N2Accumulate::output_and_reset(frameID& in_frame_id, frameID& in_rfiframema
                                            / ticks_in_accum);
 
         // Sample numbers for normalizing variaces/weights
-        int64_t ns = _n_valid_fpga_samples_in_vis.at(f); // ns = "number of samples"
+        int64_t ns = _n_valid_samples_in_vis.at(f); // ns = "number of samples"
         float ins = (ns != 0) ? (1.0f / ((float)ns)) : 0.0f;
 
         // Copy data into buffer.
@@ -1193,7 +1348,7 @@ bool N2Accumulate::output_and_reset(frameID& in_frame_id, frameID& in_rfiframema
         _var[i] = 0.0f;
 
     // These arrays are smaller, single threaded is fine.
-    std::fill(_n_valid_fpga_samples_in_vis.begin(), _n_valid_fpga_samples_in_vis.end(), 0);
+    std::fill(_n_valid_samples_in_vis.begin(), _n_valid_samples_in_vis.end(), 0);
     std::fill(_n_valid_sample_diff_sq_sum.begin(), _n_valid_sample_diff_sq_sum.end(), 0);
     std::fill(_n_usable_variance_pairs.begin(), _n_usable_variance_pairs.end(), 0);
     std::fill(_n_rfi_samples_in_vis.begin(), _n_rfi_samples_in_vis.end(), 0);

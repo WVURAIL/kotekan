@@ -25,6 +25,19 @@ visibility after fringestopping. Masking based on the data can break these
 assumptions. Taking its reciprocal does not give an unbiased estimate of inverse
 variance.
 
+## Counts and timing
+
+Configured integration lengths and normalization counts use voltage samples;
+timing and output counts use FPGA ticks. Input metadata must give a positive
+integer number of ticks per sample. The sample period and frequency order must
+stay fixed, and all five input streams must have matching time and frequency
+metadata. Correlation frames must be consecutive and start on a frame boundary.
+
+Within each subintegration and frequency, lower-triangular counts must be equal
+and between zero and `sub_integration_ntime`. The redundant upper entries in
+diagonal tiles are ignored. Unequal counts across products are rejected;
+`packet_loss_is_scalar: false` is not supported. The scalar N2 format is unchanged.
+
 ## Tests
 
 Run the CPU stage tests against the selected build:
@@ -36,5 +49,5 @@ python3 -m pytest -q tests/test_n2_accumulate.py \
 ```
 
 The tests compare saved output with independently calculated counts, means and
-weights. Cases cover masked pairs, empty frames, unequal counts between frames,
-large counts and pairs that span input frames.
+weights. Cases cover masked pairs, zero support, unequal counts between frames,
+FPGA tick conversion, frame boundaries and invalid input.
