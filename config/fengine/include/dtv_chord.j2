@@ -106,3 +106,33 @@ run_send_dtv_RFImask:
           signal_buf: host_dtv_RFImask_ringbuffer
           gpu_mem_output: dtv_RFImask_buffer
 {% endif %}
+
+# Optional mask/loss counts in native [polarization, eight-dish group] order.
+{% if dtv_record_input_health|default(false) %}
+host_dtv_input_health_buffer:
+    kotekan_buffer: ndarray
+    num_frames: buffer_depth
+    value_type: uint32
+    extents: [1, num_frequencies, num_polarizations, num_dishes / 8, 7]
+    quantity_name: "input_health_v1"
+    dimnames: ["Th", "F", "P", "D8", "Reason"]
+    dimscalings: [8192, 1, 1, 8, 1]
+    metadata_pool: main_pool
+
+run_dtv_input_health:
+    kotekan_stage: DtvInputHealth
+    num_local_freq: num_frequencies
+    pl_buf: host_pl_expanded_mask_buffer
+    rfi_buf: host_rfi_RFImask_buffer
+    dtv_buf: host_dtv_mask_buffer
+    out_buf: host_dtv_input_health_buffer
+
+record_dtv_input_health:
+    kotekan_stage: hdf5FileWrite
+    in_buf: host_dtv_input_health_buffer
+    file_name: input_health_v1
+    base_dir: {{ dtv_input_health_dir|default("./input_health")|tojson }}
+    prefix_hostname: true
+    max_frames: -1
+    input_order: CHORDBeamformer
+{% endif %}
