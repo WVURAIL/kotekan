@@ -73,9 +73,14 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * arrays (ie. round robin).  The output stream will see frames in the order: [T0F0 T0F1 T0F2 T1F0
  * T1F1 T1F2 ...]
  *
+ * Input streams must have matching time and frequency metadata and a fixed integer number
+ * of FPGA ticks per voltage sample. Frames must be consecutive and start on a frame boundary.
+ * Counts must be equal across products and between zero and the subintegration length.
+ * Normalization uses voltage samples; timing and output counts use FPGA ticks.
+ *
  * VARIANCE ESTIMATION
  *
- * The output N2FrameViews include the visibility matrix (normalized by the number of good fpga
+ * The output N2FrameViews include the visibility matrix (normalized by the number of good voltage
  * samples in the accumulation) and the `weights`: the reciprocal of the estimated variance of the
  * visibilities.  Because the visibilities may have a linear drift (due to fringes, etc) we cannot
  * use the standard estimator, we want to measure the variance of the visibility apart from linear
@@ -105,6 +110,17 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * based on the data can break these assumptions. Taking its reciprocal does not give an
  * unbiased estimate of inverse variance. The mean is V = sum_accepted corr / N, and the
  * output conjugates the lower-triangular input into upper-triangular order.
+ *
+ * Configured integration lengths and normalization counts use voltage samples; timing and
+ * output counts use FPGA ticks. Input metadata must give a positive integer number of ticks
+ * per sample. The sample period and frequency order must stay fixed, and all five input
+ * streams must have matching time and frequency metadata. Correlation frames must be
+ * consecutive and start on a frame boundary.
+ *
+ * Within each subintegration and frequency, lower-triangular counts must be equal and between
+ * zero and sub_integration_ntime. The redundant upper entries in diagonal tiles are ignored.
+ * Unequal counts across products are rejected; packet_loss_is_scalar: false is not supported.
+ * The scalar N2 format is unchanged.
  *
  * TODO:    - radiometer_chi2
  *
@@ -148,8 +164,9 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * @conf    packet_loss_is_scalar           bool    Whether the packet loss (ie. the counts
  *                                          matrix) is a scalar in dish element or not.  If so,
  *                                          all baselines use the same value from `counts`, the
- *                                          first element in the buffer. The `false` case has
- *                                          not been implemented.
+ *                                          first element in the buffer. Lower-triangular counts
+ *                                          must be equal and in range. The `false` case is not
+ *                                          implemented.
  * @conf    samples_per_data_set            int64_t Total number of time samples covered by each
  *                                          input frame. nt_outer in n2k.
  * @conf    sub_integration_ntime           int64_t Number of time samples integrated in each
@@ -252,9 +269,13 @@ private:
 
     const bool _packet_loss_is_scalar;
 
-    const int64_t _n_fpga_samples_per_n2k_frame;
-    const int64_t _n_fpga_samples_per_n2k_correlation;
+    const int64_t _n_samples_per_n2k_frame;
+    const int64_t _n_samples_per_n2k_correlation;
     int64_t _n_integrations_per_n2k_frame;
+    int64_t _fpga_ticks_per_sample = 0; ///< Set by the first frame; must remain fixed
+    int64_t _fpga_ticks_per_n2k_frame = 0;
+    int64_t _fpga_ticks_per_n2k_correlation = 0;
+    std::vector<int> _coarse_freq_order; ///< Frequency order; must remain fixed
 
     const int64_t _num_polarizations; ///< Total number of telescope elements (~2 * num dishes)
     const int64_t _num_dishes;        ///< Total number of telescope elements (~2 * num dishes)
@@ -290,8 +311,8 @@ private:
     // and _num_freq_in_frame are known.
     std::vector<int32_t> _vis;
     std::vector<float> _var;
-    // number of fpga samples, per frequency, in frame
-    std::vector<int64_t> _n_valid_fpga_samples_in_vis;
+    // Accepted voltage samples per frequency in the accumulation.
+    std::vector<int64_t> _n_valid_samples_in_vis;
     std::vector<float> _n_valid_sample_diff_sq_sum;
     std::vector<int64_t> _n_usable_variance_pairs; ///< Accepted pairs with samples in both frames
     std::vector<uint64_t> _n_rfi_samples_in_vis;
