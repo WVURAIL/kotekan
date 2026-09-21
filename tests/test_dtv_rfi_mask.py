@@ -112,10 +112,10 @@ def setup_pipeline(tmp_path, runtime, *, real_detector=False, fault=None):
             path = source("dtv_mask")
             data = bytearray(path.read_bytes())
             if fault in ("late", "missing"):
-                seq = struct.unpack_from("<q", data, 20)[0]
-                struct.pack_into("<q", data, 20, seq + (-1 if fault == "late" else T * 4))
+                seq = struct.unpack_from("<q", data, 36)[0]
+                struct.pack_into("<q", data, 36, seq + (-1 if fault == "late" else T * 4))
             elif fault == "period":
-                struct.pack_into("<i", data, 28, T * 8)
+                struct.pack_into("<i", data, 44, T * 8)
             else:
                 data[-1] = 2
             path.write_bytes(data)
@@ -127,7 +127,7 @@ def setup_pipeline(tmp_path, runtime, *, real_detector=False, fault=None):
         cfg.pop(f"gen_{name}", None)
         cfg.pop(f"dump_{name}", None)
         cfg[f"read_{name}"] = dict(
-            kotekan_stage="rawFileRead", buf=f"host_{name}_buffer",
+            kotekan_stage="rawFileRead", strict_framing=True, buf=f"host_{name}_buffer",
             base_dir="input", file_name=name, file_ext="raw",
             prefix_hostname=False, end_interrupt=False)
     cfg.pop("samples_per_data_set")

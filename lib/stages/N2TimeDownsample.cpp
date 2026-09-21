@@ -308,12 +308,15 @@ void N2TimeDownsample::main_thread() {
                           output.radiometer_chi2.begin());
                 output.emethod = frame.emethod;
                 have_supported = true;
-            } else if (!std::equal(frame.flags.begin(), frame.flags.end(), output.flags.begin())
-                       || !std::equal(frame.mask.begin(), frame.mask.end(), output.mask.begin())
+            } else if (!std::equal(frame.mask.begin(), frame.mask.end(), output.mask.begin())
                        || !std::equal(frame.gain.begin(), frame.gain.end(), output.gain.begin())
                        || frame.emethod != output.emethod) {
-                FATAL_ERROR("N2TimeDownsample input flags/gains/eigenmethod changed within a bin");
+                FATAL_ERROR("N2TimeDownsample input mask/gains/eigenmethod changed within a bin");
             }
+            // A feed flagged in any contributing frame remains flagged.
+            for (size_t i = 0; i < num_elements; ++i)
+                if (frame.flags[i] == 0.0f)
+                    output.flags[i] = 0.0f;
             if (do_fringestop)
                 tel.fill_fringestop_phases_1d(freq_MHz, input_eop, target, feed_positions_m, phase);
             size_t p = 0;

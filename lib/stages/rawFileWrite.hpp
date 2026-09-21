@@ -23,10 +23,11 @@
  * @conf file_ext  String. File extension.
  * @conf num_frames_per_file Int. No of frames to write into a single file.
  * @conf exit_after_n_files  Int. Stop writing after this many files, Default 0 = unlimited files.
- * @conf ignore_ndarray_frame_desc Bool. Default false. Write the raw frame bytes even if the
- *       frames carry a dynamically attached NDArray frame descriptor. The descriptor itself is
- *       still not serialized, so the reader must know the array layout by other means (e.g.
- *       from the config that produced the dump).
+ * @conf prefix_hostname    Bool. Prefix the filename with the hostname. Default true.
+ * @conf allow_ndarray      Bool. Write an NDArray buffer's raw bytes instead of failing.
+ *                          Default false. The frame descriptor is NOT written, so the
+ *                          reader has to know the shape out of band.
+ * @conf ignore_ndarray_frame_desc Bool. Compatibility alias for allow_ndarray.
  *
  * @par Metrics
  * @metric kotekan_rawfilewrite_write_time_seconds
@@ -52,10 +53,10 @@ private:
     std::string _file_ext;
     uint32_t _num_frames_per_file;
     uint32_t _exit_after_n_files;
+    /// Write NDArray-descriptor buffers anyway (shape known out of band; see the .cpp note).
+    bool _allow_ndarray = false;
     // Prefix file name with hostname or not
     bool _prefix_hostname;
-    // Dump raw frame bytes even if an NDArray frame descriptor is attached
-    bool _ignore_ndarray_frame_desc;
 };
 
 #endif

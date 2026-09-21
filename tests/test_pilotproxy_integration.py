@@ -282,6 +282,7 @@ def test_pathfinder_sparse_padded_inputs(pipeline, active_inputs):
         pipeline.config[stage]["exit_after_n_files"] = "num_gen_frames"
     pipeline.config["replay_voltage"] = {
         "kotekan_stage": "rawFileRead",
+        "strict_framing": True,
         "buf": "host_voltage_buffer",
         "base_dir": "input",
         "file_name": "voltage",

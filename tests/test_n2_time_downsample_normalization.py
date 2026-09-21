@@ -171,6 +171,7 @@ def run_stage(
     source.write()
     for stage in source.stage_block.values():
         stage["end_interrupt"] = False
+        stage["strict_framing"] = True
     if layout:
         source.buffer_block[source.name]["n2_layout"] = layout
     output = runner.DumpN2Buffer(
@@ -313,6 +314,32 @@ def test_count_weighted_mean_and_precision(normalized, case):
     assert found
 
 
+@pytest.mark.parametrize("unsupported_flag", [0.0, np.nan])
+def test_flags_fold_only_contributing_frames(tmp_path, unsupported_flag):
+    frames, records, bins = make_frames()
+    for record in records.values():
+        supported = [f for f in record["frames"] if f.metadata.n_valid_fpga_ticks]
+        for ordinal, frame in enumerate(supported):
+            frame.flags[:] = 1
+            frame.flags[ordinal % (D - 1)] = 0
+        for frame in record["frames"]:
+            if not frame.metadata.n_valid_fpga_ticks:
+                frame.flags[:] = unsupported_flag
+    actual = run_stage(tmp_path, frames, records, bins)
+    assert len(actual) == len(records)
+    for out, record in zip(actual, records.values()):
+        supported = [f for f in record["frames"] if f.metadata.n_valid_fpga_ticks]
+        flags = (
+            np.logical_and.reduce([f.flags != 0 for f in supported])
+            if supported
+            else np.zeros(D, dtype=bool)
+        )
+        np.testing.assert_array_equal(out.flags, flags)
+        mean, weight = expected(record["frames"])
+        np.testing.assert_allclose(out.vis, mean, rtol=2e-6, atol=1e-7)
+        np.testing.assert_allclose(out.weight, weight, rtol=2e-6, atol=1e-7)
+
+
 @pytest.mark.timeout(20)
 def test_one_bin_per_rotation_does_not_merge_days(tmp_path):
     frames, records, bins = make_frames(frames=14, ticks=8000000000, bins=1)
@@ -347,7 +374,7 @@ def test_one_bin_per_rotation_does_not_merge_days(tmp_path):
         "midpoint",
         "visibility",
         "dataset",
-        "flags",
+        "mask",
         "gain",
         "bins-zero",
         "max-age",
@@ -395,8 +422,8 @@ def test_refuse_malformed_supported_stream(tmp_path, fault, capsys):
         frame.vis[1] = complex(np.nan, 0)
     elif fault == "dataset":
         frame.metadata.dataset_id[0] = 1
-    elif fault == "flags":
-        frame.flags[0] = 0
+    elif fault == "mask":
+        frame.mask[0] = 0
     elif fault == "gain":
         frame.gain[0] = 2
     elif fault == "bins-zero":
@@ -418,8 +445,8 @@ def test_refuse_malformed_supported_stream(tmp_path, fault, capsys):
         "midpoint": "EOP/time identity mismatch",
         "visibility": "nonfinite supported visibility",
         "dataset": "dataset or RFI policy changed within an output bin",
-        "flags": "input flags/gains/eigenmethod changed within a bin",
-        "gain": "input flags/gains/eigenmethod changed within a bin",
+        "mask": "input mask/gains/eigenmethod changed within a bin",
+        "gain": "input mask/gains/eigenmethod changed within a bin",
         "bins-zero": "positive finite bin count, max_age and input count",
         "max-age": "positive finite bin count, max_age and input count",
         "overflow": "invalid or overflowing FPGA time interval",

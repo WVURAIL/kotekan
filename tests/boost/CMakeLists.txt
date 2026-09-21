@@ -11,6 +11,10 @@ target_link_libraries(test_truncate PRIVATE kotekan_libs kotekan_utils)
 add_executable(test_synchronized_queue test_synchronized_queue.cpp)
 target_link_libraries(test_synchronized_queue PRIVATE pthread kotekan_libs kotekan_utils)
 
+# frameID / modulo<int>: reduce-on-write, the 2^32 wrap that skips buffer slots
+add_executable(test_modulo test_modulo.cpp)
+target_link_libraries(test_modulo PRIVATE libexternal kotekan_libs kotekan_utils kotekan_core)
+
 add_executable(test_stat_tracker test_stat_tracker.cpp)
 target_link_libraries(test_stat_tracker PRIVATE libexternal kotekan_libs kotekan_utils kotekan_core)
 
@@ -251,8 +255,8 @@ endif()
 
 # test_FrameDescSerialize - FrameDesc JSON serialization round-trip + adversarial input
 add_executable(test_FrameDescSerialize test_FrameDescSerialize.cpp)
-target_link_libraries(test_FrameDescSerialize PRIVATE libexternal kotekan_libs kotekan_utils
-                                                      kotekan_core kotekan_metadata)
+target_link_libraries(test_FrameDescSerialize PRIVATE libexternal kotekan_libs kotekan_core
+                                                      kotekan_metadata kotekan_utils)
 
 # test_N2Subset - tests for N2Subset stage
 add_executable(test_N2Subset test_N2Subset.cpp)
@@ -307,3 +311,30 @@ else()
 endif()
 target_include_directories(test_N2AutoSpectrum PRIVATE ${KOTEKAN_SOURCE_DIR}/lib/stages
                                                        ${KOTEKAN_SOURCE_DIR}/lib/utils)
+
+# test_TransposeBasebandArray - tests for TransposeBasebandArray stage
+add_executable(test_TransposeBasebandArray test_TransposeBasebandArray.cpp)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    target_link_libraries(
+        test_TransposeBasebandArray
+        PRIVATE libexternal
+                kotekan_stages
+                kotekan_libs
+                kotekan_utils
+                kotekan_core
+                -Wl,-all_load
+                kotekan_metadata)
+else()
+    target_link_libraries(
+        test_TransposeBasebandArray
+        PRIVATE libexternal
+                kotekan_stages
+                kotekan_libs
+                kotekan_utils
+                kotekan_core
+                -Wl,--whole-archive
+                kotekan_metadata
+                -Wl,--no-whole-archive)
+endif()
+target_include_directories(test_TransposeBasebandArray PRIVATE ${KOTEKAN_SOURCE_DIR}/lib/stages
+                                                               ${KOTEKAN_SOURCE_DIR}/lib/utils)

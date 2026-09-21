@@ -111,23 +111,20 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * changes. A bias correction is applied, however, it is not guaranteed the resulting variance value
  * is positive definite.
  *
- * The "EvenOddPosDef" estimator differences normalized visibility samples and accounts for the
- * number of samples in each. For a pair with positive counts n0 and n1, its contribution is
- * Q_pair = n0*n1/(n0+n1) * |corr1/n1 - corr0/n0|^2. Let Q be the sum of these contributions,
- * k the number of admitted pairs with both counts positive, and N the total admitted valid
- * sample count. The estimated variance of the accumulated mean is Q/(k*N); the output weight
- * is k*N/Q. A one-sided pair still contributes its supported samples to the visibility and N,
- * but contributes neither Q nor k. Pairs rejected by the second-stage frame mask contribute
- * to neither the visibility nor the variance estimate.
+ * The "EvenOddPosDef" estimator sums Q_pair = n0*n1/(n0+n1) * |corr1/n1-corr0/n0|^2
+ * over accepted pairs with samples in both frames. With k such pairs and N accepted samples,
+ * the weight is N*k/Q. A pair with samples in only one frame contributes to the mean, but
+ * not Q or k. The weight is zero if N, k or Q is zero, or if Q or the weight is nonfinite.
+ * Q/(k*N) estimates the variance of the mean for independent sample errors with a common
+ * variance and equal expected visibility within each pair after fringestopping. Masking
+ * based on the data can break these assumptions. Taking its reciprocal does not give an
+ * unbiased estimate of inverse variance. The mean is V = sum_accepted corr / N, and the
+ * output conjugates the lower-triangular input into upper-triangular order.
  *
- * This variance estimate assumes independent sample errors, a common per-sample variance
- * for this product across the accumulation, and equal expected normalized visibility within
- * each differenced pair after any fringestopping. Under these assumptions Q/k estimates that
- * common variance. The inverse of an estimated variance is not itself an unbiased precision
- * estimate. Data-dependent excision can violate these assumptions; this normalization is not
- * a physical noise or science-transfer calibration. Zero support, no usable differences, zero
- * Q, or non-finite Q/weight produces zero weight (unavailable precision), even when the
- * accumulated visibility has support.
+ * The five input streams must agree on coarse frequencies and on the correlation period, which
+ * must be an integer multiple of sub_integration_ntime; frames must be consecutive and start on a frame
+ * boundary; the valid count plus packet loss, and the RFI count, must not exceed
+ * sub_integration_ntime.
  *
  * TODO:    - radiometer_chi2
  *
@@ -159,6 +156,15 @@ void from_json(const nlohmann::json& j, N2VarianceMode& m);
  * @buffer  in_rfiframemask_buf  RFIFrameMask buffer, a mask marking specific correlator samples to
  * excise.
  *         @buffer_format   NDArray uint8 [num_integrations, num_freq]
+ *         @buffer_metadata chordMetadata
+ * @buffer  in_bad_feed_mask_buf  Optional bad feed mask (1 == good) in the input order, as
+ * produced by bufferBadInputs and fed to the GPU, folded (AND) over each accumulation
+ * bin into the output frames' per-element flags. Consumed 1:1 with the correlation
+ * frames and checked against them by FPGA sequence number, so the recorded flags are
+ * exactly the masks the GPU applied to the accumulated data. Each mask frame must be one
+ * mask sample covering exactly one correlation frame. Without this input the flags are
+ * all good.
+ *         @buffer_format   NDArray int8 [1, num_polarizations, num_dishes]
  *         @buffer_metadata chordMetadata
  * @buffer  out_buf         The accumulated and tagged data.
  *      @buffer_format N2Buffer. layout=FullUpperTri, num_ev=0
@@ -263,12 +269,13 @@ public:
 
 private:
     // Buffers to read/write
-    Buffer* in_buf;              /// Buffer containing input correlations
-    Buffer* in_counts_buf;       /// Buffer containing input counts
-    Buffer* in_rficounts_buf;    /// Buffer containing input rficounts
-    Buffer* in_plcounts_buf;     /// Buffer containing input plcounts
-    Buffer* in_rfiframemask_buf; /// Buffer containing input rfiframemask
-    Buffer* out_buf;             /// Output for the main vis dataset only
+    Buffer* in_buf;               /// Buffer containing input correlations
+    Buffer* in_counts_buf;        /// Buffer containing input counts
+    Buffer* in_rficounts_buf;     /// Buffer containing input rficounts
+    Buffer* in_plcounts_buf;      /// Buffer containing input plcounts
+    Buffer* in_rfiframemask_buf;  /// Buffer containing input rfiframemask
+    Buffer* in_bad_feed_mask_buf; /// Optional buffer containing the bad feed mask; may be null
+    Buffer* out_buf;              /// Output for the main vis dataset only
 
     // Parameters saved from the config files
     const int64_t _num_freq_per_n2k_frame;
@@ -339,6 +346,10 @@ private:
     std::vector<int64_t> _n_usable_variance_pairs; ///< Admitted pairs with two positive counts
     std::vector<uint64_t> _n_rfi_samples_in_vis;
     std::vector<uint64_t> _n_pl_samples_in_vis;
+    /// Bad feed mask folded (AND) over the current accumulation bin (1 == good), input order
+    std::vector<uint8_t> _accum_bad_feed_mask;
+    /// AND a bad feed mask frame (@c _num_elements bytes, input order) into @c _accum_bad_feed_mask
+    void fold_bad_feed_mask_into_accum(const uint8_t* bad_feed_mask);
     int64_t _vis_samples_in_out_frame;
     uint64_t _accum_fpga_start_tick;
     int64_t _accum_bin_idx;

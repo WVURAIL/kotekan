@@ -5,11 +5,12 @@
 #include "buffer.hpp"          // for Buffer
 #include "bufferContainer.hpp" // for bufferContainer
 #include "errors.h"            // for exit_kotekan, ReturnCode
-#include "kotekanLogging.hpp"  // for INFO, ERROR
+#include "kotekanLogging.hpp"  // for INFO, WARN, ERROR, FATAL_ERROR
 #include "metadata.hpp"        // for metadataObject
 
 #include "fmt.hpp" // for compile_string_to_view
 
+#include <chrono>     // for microseconds
 #include <cstdio>     // for fread, snprintf, fclose, fopen, fseeko, ftello, FILE
 #include <errno.h>    // for errno
 #include <functional> // for bind, function
@@ -18,6 +19,7 @@
 #include <stdint.h>   // for uint32_t, uint8_t
 #include <string.h>   // for strerror
 #include <sys/stat.h> // for stat
+#include <thread>     // for sleep_for
 #include <unistd.h>   // for gethostname, sleep
 
 
@@ -46,6 +48,8 @@ rawFileRead::rawFileRead(Config& config, const std::string& unique_name,
 
     // Interrupt Kotekan if run out of files to read.
     end_interrupt = config.get_default<bool>(unique_name, "end_interrupt", false);
+    frame_period_us = config.get_default<uint64_t>(unique_name, "frame_period_us", 0);
+    strict_framing = config.get_default<bool>(unique_name, "strict_framing", false);
 }
 
 rawFileRead::~rawFileRead() {}
@@ -100,25 +104,25 @@ void rawFileRead::main_thread() {
         if (fseeko(fp, 0, SEEK_SET) != 0)
             FATAL_ERROR("rawFileRead: cannot rewind {}", full_path);
 
-        if (fread((void*)&metadata_size, sizeof(uint32_t), 1, fp) != 1) {
-            ERROR("rawFileRead: Failed to read file {:s} metadata size value, {:s}", full_path,
-                  strerror(errno));
-            break;
-        }
+        if (fread((void*)&metadata_size, sizeof(uint32_t), 1, fp) != 1)
+            FATAL_ERROR("rawFileRead: Failed to read file {:s} metadata size value, {:s}",
+                        full_path, strerror(errno));
 
-        // rawFileWrite emits a metadata-size header for EVERY frame. Include
-        // it in the record length and consume it on each iteration below.
-        // Exact framing refuses truncated/extended records and a mismatched
-        // configured payload layout (including per-product support extensions).
+        // Each rawFileWrite record includes its own metadata-size header.
         if (buf->frame_size == 0
             || uint64_t(buf->frame_size)
                    > std::numeric_limits<uint64_t>::max() - sizeof(uint32_t) - metadata_size)
             FATAL_ERROR("rawFileRead: invalid configured frame size");
         const uint64_t record_size = sizeof(uint32_t) + uint64_t(metadata_size) + buf->frame_size;
-        if (fileSize % record_size)
-            FATAL_ERROR("rawFileRead: raw file payload does not contain whole frames for the "
-                        "configured descriptor: {}",
-                        full_path);
+        if (fileSize % record_size) {
+            if (strict_framing)
+                FATAL_ERROR("rawFileRead: raw file payload does not contain whole frames for the "
+                            "configured descriptor: {}",
+                            full_path);
+            WARN("rawFileRead: {:s} has {:d} trailing bytes that do not form a whole frame for the "
+                 "configured descriptor, ignoring them",
+                 full_path, fileSize % record_size);
+        }
         if (buf->buffer_type == "N2" && metadata_size == 0)
             FATAL_ERROR("rawFileRead: N2 frames require metadata");
         const uint64_t num_frames_per_file = fileSize / record_size;
@@ -168,6 +172,9 @@ void rawFileRead::main_thread() {
                  buf->buffer_name, frame_id);
             buf->mark_frame_full(unique_name, frame_id);
             frame_id = (frame_id + 1) % buf->num_frames;
+
+            if (frame_period_us > 0)
+                std::this_thread::sleep_for(std::chrono::microseconds(frame_period_us));
         }
 
         fclose(fp);

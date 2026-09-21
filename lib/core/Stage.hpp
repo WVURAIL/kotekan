@@ -123,6 +123,21 @@ protected:
      */
     std::vector<Buffer*> get_buffer_array(const std::string& name);
 
+    /**
+     * @brief Gets the buffers linked to @c name in the config, which may hold
+     *        either a single buffer name or a list of them.
+     *
+     * Use this where a stage needs the same information from one buffer on one
+     * telescope and from several on another -- e.g. the coarse frequency
+     * channels, which CHORD carries in one voltage buffer and CHIME splits over
+     * one buffer per channel.
+     *
+     * @param name The name of the option in the config.
+     * @return A vector of pointers to the buffers requested, with one element
+     *         when the option names a single buffer.
+     */
+    std::vector<Buffer*> get_buffer_or_array(const std::string& name);
+
     bufferContainer& buffer_container;
 
 private:
@@ -139,7 +154,8 @@ private:
     /// joined after the exit signal has been given before exiting ungracefully.
     uint32_t join_timeout;
 
-    // List of stage tids used for CPU usage tracking
+    // List of stage tids used for CPU usage tracking. Written by each stage
+    // thread as it starts and exits, and read by the CPU monitor thread.
     std::vector<pid_t> thread_list;
 
     // Lock for changing or reading thread_list, which the stage's own threads

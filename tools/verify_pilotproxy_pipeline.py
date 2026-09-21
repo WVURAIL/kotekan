@@ -51,6 +51,11 @@ K = 64
 FREQ_IDS = [2408, 1600, 2623, 4000]
 NUM_INPUT_FRAMES = 8
 
+# Current chordMetadataFormat on the little-endian, 64-bit capture hosts.
+CHORD_METADATA_SIZE = 148888
+CHORD_METADATA_LIMITS = (10, 24, 24, 12288, 128, 8)
+CHORD_METADATA_PREFIX = struct.Struct("<7i4xqi")
+
 
 @dataclass
 class RawFrame:
@@ -75,12 +80,15 @@ def read_raw_frames(pattern, frame_size):
             (metadata_size,) = struct.unpack_from("<I", data, offset)
             offset += 4
             metadata = data[offset : offset + metadata_size]
-            if metadata_size < 28 or len(metadata) != metadata_size:
+            if len(metadata) != metadata_size:
                 raise ValueError(f"{path}: missing or truncated timing metadata")
-            # Fixed prefix of lib/metadata/chordMetadata.cpp's serialized format.
-            if struct.unpack_from("<3i", metadata) != (10, 24, 12288):
+            if metadata_size != CHORD_METADATA_SIZE:
+                raise ValueError(f"{path}: unsupported CHORD metadata size {metadata_size}")
+            # Six layout limits, frame counter, ABI padding, then FPGA timing.
+            prefix = CHORD_METADATA_PREFIX.unpack_from(metadata)
+            if prefix[:6] != CHORD_METADATA_LIMITS:
                 raise ValueError(f"{path}: unsupported CHORD metadata layout")
-            sequence, downsampling = struct.unpack_from("<qi", metadata, 16)
+            sequence, downsampling = prefix[-2:]
             if sequence < 0 or downsampling <= 0:
                 raise ValueError(f"{path}: missing or invalid FPGA timing")
             offset += metadata_size

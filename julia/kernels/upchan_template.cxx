@@ -13,6 +13,7 @@
 #include "chordMetadata.hpp"
 #include "cudaCommand.hpp"
 #include "cudaDeviceInterface.hpp"
+#include "cudaUtils.hpp"
 #include "div.hpp"
 
 #include <algorithm>
@@ -179,6 +180,9 @@ private:
         {{/isscalar}}
     {{/kernel_arguments}}
 
+    // Set once, on the first frame; see `NDArrayRingBuffer::set_metadata`
+    bool did_set_metadata;
+
     // To avoid trailing comma below
     int dummy;
 };
@@ -249,18 +253,16 @@ cuda{{{kernel_name}}}::cuda{{{kernel_name}}}(Config& config,
         {{/isscalar}}
     {{/kernel_arguments}}
 
+    did_set_metadata(false),
     dummy()                      // avoid trailing comma
 {
     // Register host memory
     {{#kernel_arguments}}
         {{^isscalar}}
             {{^hasbuffer}}
-                {
-                    const cudaError_t ierr = cudaHostRegister(host_{{{name}}}_buffer.data(),
-                                                              host_{{{name}}}_buffer.size() * sizeof *host_{{{name}}}_buffer.data(),
-                                                              0);
-                    assert(ierr == cudaSuccess);
-                }
+                CHECK_CUDA_ERROR(cudaHostRegister(host_{{{name}}}_buffer.data(),
+                                                  host_{{{name}}}_buffer.size() * sizeof *host_{{{name}}}_buffer.data(),
+                                                  0));
             {{/hasbuffer}}
         {{/isscalar}}
     {{/kernel_arguments}}
@@ -283,15 +285,16 @@ cuda{{{kernel_name}}}::cuda{{{kernel_name}}}(Config& config,
 
     set_command_type(gpuCommandType::KERNEL);
 
-    // Build the PTX only once
-    static std::once_flag build_ptx_flag;
-    std::call_once(build_ptx_flag, [&]() {
+    // Build the PTX once per device: the kernels live in this device's `runtime_kernels`, shared
+    // by the `buffer_depth` instances of this command (building twice is fatal), while a stage on
+    // another GPU has its own device. (A static flag would be shared by the stages of all GPUs.)
+    if (!device.runtime_kernels.count("{{{kernel_name}}}_" + std::string(kernel_symbol))) {
         const std::vector<std::string> opts = {
             "--gpu-name={{{cuda_arch}}}",
             "--verbose",
         };
         device.build_ptx("lib/cuda/generated/{{{kernel_name}}}.ptx", {kernel_symbol}, opts, "{{{kernel_name}}}_");
-    });
+    }
 }
 
 cuda{{{kernel_name}}}::~cuda{{{kernel_name}}}() {}
@@ -356,7 +359,6 @@ cudaEvent_t cuda{{{kernel_name}}}::execute(cudaPipelineState& /*pipestate*/, con
     {{/kernel_arguments}}
 
     // Since we use a ring buffer we need to set the metadata only once
-    static bool did_set_metadata = false;
     if (instance_num == 0 && !did_set_metadata) {
         did_set_metadata = true;
 
@@ -375,9 +377,13 @@ cudaEvent_t cuda{{{kernel_name}}}::execute(cudaPipelineState& /*pipestate*/, con
         auto Ebar_meta = Ebar_buffer.get_metadata();
 
         const auto E_nfreq = E_meta->get_nfreq();
+        // `Fmin` and `Fmax` come from the config; they select the coarse frequencies this
+        // kernel upchannelizes and must lie inside the input buffer.
+        if (!(0 <= Fmin && Fmin <= Fmax && Fmax <= E_nfreq))
+            FATAL_ERROR("Invalid frequency span [{:d},{:d}) for kernel {{{kernel_name}}}: input "
+                        "buffer E holds {:d} frequencies",
+                        Fmin, Fmax, E_nfreq);
         const auto Ebar_nfreq = cuda_upchannelization_factor * (Fmax - Fmin);
-        assert(Ebar_nfreq >= 0);
-        assert(Ebar_nfreq <= cuda_upchannelization_factor * E_nfreq);
 
         const auto E_freq_upchan_factor = E_meta->get_freq_upchan_factor();
         std::vector<int> Ebar_freq_upchan_factor(Ebar_nfreq);
@@ -411,19 +417,37 @@ cudaEvent_t cuda{{{kernel_name}}}::execute(cudaPipelineState& /*pipestate*/, con
 
         const auto G_meta = G_buffer.get_metadata();
         const auto G_nfreq = G_meta->get_nfreq();
-        assert(G_nfreq == Ebar_nfreq);
+        // Mismatched gains would scale each frequency by another frequency's gain.
+        if (G_nfreq != Ebar_nfreq)
+            FATAL_ERROR("Gain buffer G holds {:d} frequencies, but kernel {{{kernel_name}}} "
+                        "produces {:d}",
+                        G_nfreq, Ebar_nfreq);
         const auto G_coarse_freq = G_meta->get_coarse_freq();
         for (int freq = 0; freq < Ebar_nfreq; ++freq)
-            assert(Ebar_coarse_freq.at(freq) == G_coarse_freq.at(freq));
+            if (Ebar_coarse_freq.at(freq) != G_coarse_freq.at(freq))
+                FATAL_ERROR("Gain buffer G is for coarse frequency {:d} at index {:d}, but kernel "
+                            "{{{kernel_name}}} produces coarse frequency {:d} there",
+                            G_coarse_freq.at(freq), freq, Ebar_coarse_freq.at(freq));
 
-        assert(E_meta->dim[E_rank - 1 - E_index_F] == E_nfreq);
-        assert(G_meta->dim[G_rank - 1 - G_index_Fbar] >= G_nfreq);
-        assert(Ebar_meta->dim[Ebar_rank - 1 - Ebar_index_Fbar] >= Ebar_nfreq);
+        // The buffers must be large enough for the frequencies we are about to read and write.
+        if (E_meta->dim[E_rank - 1 - E_index_F] != E_nfreq)
+            FATAL_ERROR("Input buffer E reports {:d} frequencies, but its frequency dimension has "
+                        "extent {:d}",
+                        E_nfreq, E_meta->dim[E_rank - 1 - E_index_F]);
+        if (G_meta->dim[G_rank - 1 - G_index_Fbar] < G_nfreq)
+            FATAL_ERROR("Gain buffer G holds {:d} frequencies, but its frequency dimension has "
+                        "extent {:d}",
+                        G_nfreq, G_meta->dim[G_rank - 1 - G_index_Fbar]);
+        if (Ebar_meta->dim[Ebar_rank - 1 - Ebar_index_Fbar] < Ebar_nfreq)
+            FATAL_ERROR("Kernel {{{kernel_name}}} produces {:d} frequencies, but the frequency "
+                        "dimension of its output buffer Ebar has extent {:d}",
+                        Ebar_nfreq, Ebar_meta->dim[Ebar_rank - 1 - Ebar_index_Fbar]);
 
         // Since we use a ring buffer we do not need to update `meta->fpga_seq_num`
     } // if !did_set_metadata
 
-    assert(Ebar_buffer.has_metadata());
+    if (!Ebar_buffer.has_metadata())
+        FATAL_ERROR("Output buffer Ebar has no metadata; kernel {{{kernel_name}}} cannot run");
 
     const char* exc_arg = "exception";
     {{#kernel_arguments}}
@@ -470,8 +494,13 @@ cudaEvent_t cuda{{{kernel_name}}}::execute(cudaPipelineState& /*pipestate*/, con
     Fmin_arg = Fmin;
     Fmax_arg = Fmax;
     const int blocks = blocks_per_frequency * (Fmax - Fmin);
-    assert(0 <= blocks);
-    assert(blocks <= max_blocks);
+    // `blocks` is both the CUDA grid size and the extent of the block dimension of the `info`
+    // buffer. Launching more than `max_blocks` blocks would make the kernel write its status
+    // words past the end of that device allocation.
+    if (!(0 <= blocks && blocks <= max_blocks))
+        FATAL_ERROR("Kernel {{{kernel_name}}} would launch {:d} blocks, but the `info` buffer "
+                    "holds only {:d} (Fmin={:d}, Fmax={:d}, blocks_per_frequency={:d})",
+                    blocks, int(max_blocks), Fmin, Fmax, int(blocks_per_frequency));
 
     // Copy inputs to device memory
     {{#kernel_arguments}}

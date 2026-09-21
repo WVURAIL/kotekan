@@ -118,6 +118,7 @@ def run(
     source.write()
     for item in source.stage_block.values():
         item["end_interrupt"] = False
+        item["strict_framing"] = True
     output = PerProductDump(
         str(tmp_path), exit_after_n_files=len(records), num_elements=D, num_ev=EV
     )

@@ -58,10 +58,30 @@ def records(kind, count):
 
 
 def transfer(
-    source, destination, kind, *, frames_per_file, output_files, failure=False
+    source,
+    destination,
+    kind,
+    *,
+    frames_per_file,
+    output_files,
+    failure=False,
+    strict_framing=True,
+    ndarray=False,
+    writer_options=None,
 ):
     destination.mkdir(exist_ok=True)
     _, buffer = specification(kind)
+    if ndarray:
+        buffer = {
+            "kotekan_buffer": "ndarray",
+            "metadata_pool": "main_pool",
+            "num_frames": 3,
+            "value_type": "int8",
+            "extents": [64],
+            "quantity_name": "samples",
+            "dimnames": ["T"],
+            "dimscalings": [1],
+        }
     stages = {
         "read": {
             "kotekan_stage": "rawFileRead",
@@ -83,6 +103,9 @@ def transfer(
             "exit_after_n_files": output_files,
         },
     }
+    if strict_framing is not None:
+        stages["read"]["strict_framing"] = strict_framing
+    stages["write"].update(writer_options or {})
     config = {
         "buffer_depth": 3,
         "num_elements": 4,
@@ -208,3 +231,75 @@ def test_invalid_raw_framing_refused(tmp_path, fault, diagnostic):
             "return_code": task.return_code,
         },
     )
+
+
+@pytest.mark.parametrize("fault,whole_frames", [("truncated", 2), ("trailing", 3)])
+def test_trailing_bytes_are_ignored(tmp_path, fault, whole_frames):
+    source = tmp_path / "source"
+    source.mkdir()
+    kind = "n2-scalar"
+    expected = records(kind, 3)
+    packed = b"".join(expected)
+    packed = packed[:-1] if fault == "truncated" else packed + b"x"
+    (source / "record_0000000.raw").write_bytes(packed)
+    unpacked = tmp_path / "unpacked"
+    task = transfer(
+        source,
+        unpacked,
+        kind,
+        frames_per_file=1,
+        output_files=whole_frames,
+        strict_framing=None,
+    )
+    assert task.return_code == 0
+    assert "trailing bytes" in task.output
+    actual = [p.read_bytes() for p in sorted(unpacked.glob("record_*.raw"))]
+    assert actual == expected[:whole_frames]
+
+
+def test_large_file_size_is_not_truncated(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    packed = struct.pack("<I", 0) + bytes(64)
+    file = source / "record_0000000.raw"
+    file.write_bytes(packed)
+    # Sparse file, to check sizes above 4 GiB are not truncated to 32 bits.
+    with file.open("r+b") as f:
+        f.truncate((1 << 32) + len(packed))
+    size = file.stat().st_size
+    assert size > (1 << 32)
+    task = transfer(
+        source,
+        tmp_path / "output",
+        "standard",
+        frames_per_file=1,
+        output_files=1,
+        strict_framing=None,
+    )
+    assert task.return_code == 0
+    assert "File size: {:d} bytes".format(size) in task.output
+
+
+@pytest.mark.parametrize("option", [None, "allow_ndarray", "ignore_ndarray_frame_desc"])
+def test_ndarray_writer_requires_opt_in(tmp_path, option):
+    source = tmp_path / "source"
+    source.mkdir()
+    expected = records("standard", 1)[0]
+    (source / "record_0000000.raw").write_bytes(expected)
+    output = tmp_path / "output"
+    task = transfer(
+        source,
+        output,
+        "standard",
+        frames_per_file=1,
+        output_files=1,
+        ndarray=True,
+        writer_options={option: True} if option else None,
+        failure=option is None,
+    )
+    if option is None:
+        assert task.return_code != 0
+        assert "rawFileWrite does not support NDArray buffers" in task.output
+    else:
+        assert task.return_code == 0
+        assert (output / "record_0000000.raw").read_bytes() == expected

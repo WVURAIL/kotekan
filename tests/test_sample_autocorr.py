@@ -55,6 +55,7 @@ def test_sample_autocorr_smoke(tmpdir):
     stages = {
         "read_in": {
             "kotekan_stage": "rawFileRead",
+            "strict_framing": True,
             "buf": "in_buf",
             "base_dir": str(in_dir),
             "file_name": "in",

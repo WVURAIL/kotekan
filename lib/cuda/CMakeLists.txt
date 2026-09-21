@@ -54,7 +54,6 @@ add_library(
     testQuantizeKernel4.cpp
     testQuantizeKernel8.cpp
     testQuantizeKernel8Chime.cpp
-    cudaRechunk.cpp
     cudaRFIS012.cpp
     cudaRFIS012bar.cpp
     cudaRFIS012tilde.cpp
@@ -123,7 +122,8 @@ if(NOT ${IWYU})
                 generated/cudaUpchannelizer_pathfinder_U8.cpp
                 generated/cudaUpchannelizer_pathfinder_U16.cpp
                 generated/cudaUpchannelizer_pathfinder_U32.cpp
-                generated/cudaUpchannelizer_pathfinder_U64.cpp)
+                generated/cudaUpchannelizer_pathfinder_U64.cpp
+                generated/cudaUpchannelizer_pathfinder_U128.cpp)
 endif()
 
 # C++17
@@ -141,8 +141,6 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --forward-unknown-to-host-compiler")
 
 target_include_directories(kotekan_cuda INTERFACE ${CUDAToolkit_INCLUDE_DIRS})
 target_include_directories(kotekan_cuda PUBLIC .)
-# For UpchannelizationSchedule.hpp (used by cudaCalcFRB2Weights)
-target_include_directories(kotekan_cuda PRIVATE ../stages)
 
 # Per-architecture gencode flags are derived from CMAKE_CUDA_ARCHITECTURES (set above); keep
 # -lineinfo for profiling/debug symbols.

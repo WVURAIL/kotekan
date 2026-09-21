@@ -402,6 +402,7 @@ def _write_evidence(record, key, frame):
 
 
 _REJECTIONS = (
+    ("valid-plus-loss-over-period", "N2Accumulate valid count plus packet loss exceeds"),
     ("nonuniform-lower-count", "N2Accumulate requires scalar counts"),
     ("negative-count", "N2Accumulate count out of range"),
     ("overfull-count", "N2Accumulate count out of range"),
@@ -425,6 +426,9 @@ def _alter_input(streams, subintegration, period, mutation):
         count.data[0, 0, 0, 7, 0] = -1
     elif mutation == "overfull-count":
         count.data[0, 0, 0, 7, 0] = subintegration + 1
+    elif mutation == "valid-plus-loss-over-period":
+        count.data[0, 0] = subintegration
+        streams["pl"][0].data[0, 0] = 1
     elif mutation == "redundant-upper-count":
         # The upper half of a diagonal count tile is not a science product.
         count.data[:, :, 0, 0, 7] = -123
