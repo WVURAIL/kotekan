@@ -314,8 +314,9 @@ def test_masked_mean_counts_and_precision(masked_accumulation, case):
 
 
 _REJECTIONS = (
-    ("negative-count", "N2Accumulate counts out of range"),
-    ("overfull-count", "N2Accumulate counts out of range"),
+    ("nonuniform-lower-count", "N2Accumulate requires scalar counts"),
+    ("negative-count", "N2Accumulate count out of range"),
+    ("overfull-count", "N2Accumulate count out of range"),
     ("valid-plus-loss-over-period", "N2Accumulate counts out of range"),
     ("count-frequency-reorder", "N2Accumulate coarse-frequency mismatch"),
     ("count-period-mismatch", "N2Accumulate time-downsampling mismatch"),
@@ -331,12 +332,17 @@ _REJECTIONS = (
 
 def _alter_input(streams, subintegration, period, mutation):
     count = streams["counts"][0]
-    if mutation == "negative-count":
-        count.data[0, 0, 0, 0, 0] = -1
+    if mutation == "nonuniform-lower-count":
+        count.data[0, 0, 0, 7, 0] -= 1
+    elif mutation == "negative-count":
+        count.data[0, 0, 0, 7, 0] = -1
     elif mutation == "overfull-count":
-        count.data[0, 0, 0, 0, 0] = subintegration + 1
+        count.data[0, 0, 0, 7, 0] = subintegration + 1
+    elif mutation == "redundant-upper-count":
+        # Upper entries in diagonal count tiles are unused.
+        count.data[:, :, 0, 0, 7] = -123
     elif mutation == "valid-plus-loss-over-period":
-        count.data[0, 0, 0, 0, 0] = subintegration
+        count.data[...] = subintegration
         streams["pl"][0].data[0, 0] = 1
     elif mutation == "count-frequency-reorder":
         count.metadata["coarse_freq"] = count.metadata["coarse_freq"][::-1].copy()
@@ -383,3 +389,15 @@ def test_unsupported_input_refused(tmpdir_factory, mutation, diagnostic):
     )
     assert stage.return_code != 0, f"Stage accepted {mutation}"
     assert diagnostic in stage.output
+
+
+def test_redundant_upper_counts_are_ignored(tmpdir_factory):
+    result = _run_accumulation(
+        tmpdir_factory,
+        mutation=lambda streams, subintegration, period: _alter_input(
+            streams, subintegration, period, "redundant-upper-count"
+        ),
+    )
+    # Check all output values after changing the unused entries.
+    for case in _CASES:
+        test_masked_mean_counts_and_precision(result, case)
