@@ -98,7 +98,8 @@ The separate evidence release in the parent workspace,
 `results/pathfinder_normalization_2026-09-09`, retains the original-binary
 failures, corrected-binary results, exact source/test snapshots, runtime and
 build identities, and a before/after figure. This is local implementation
-validation. GPU-to-accumulator replay, full shared-GPU timing, telescope
+validation. A [composed CUDA replay](pilotproxy_testing.md#composed-native-visibility-replay)
+also checks native per-product output. Full shared-GPU timing, telescope
 calibration, reason-coded input health and shadow operation remain pending.
 
 `N2TimeDownsample` has separate deterministic CPU validation of count-weighted

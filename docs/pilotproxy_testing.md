@@ -82,8 +82,8 @@ loss; normalizing against nominal time would be incorrect. Zero counts denote
 unmeasured products. The scalar CPU accumulator now has a separate
 [normalization contract and regression](n2_mask_normalization.md): usable
 positive-support variance pairs, widened count arithmetic, sample/FPGA-tick
-separation and explicit support/identity checks. The complete GPU-to-accumulator
-replay remains an additional acceptance check.
+separation and explicit support/identity checks. A composed CUDA replay also
+checks the per-product accumulator output in one process.
 
 ```sh
 python -m pytest tests/test_dtv_rfi_mask.py -q
@@ -103,3 +103,26 @@ These local tests are not Pathfinder operation, scientific threshold calibration
 shared-GPU deadline acceptance, separate reason-coded input-health validation,
 or a measured science-transfer function. Shadow and applied telescope runs
 remain pending.
+
+## Composed native visibility replay
+
+`test_dtv_n2_pipeline.py` connects the detector, applied mask, CUDA visibility
+and joint-count correlators, and `N2Accumulate` in one process. It compares
+intermediate integers, native complex means, per-product counts, paired-support
+weights and FPGA timing against direct calculations. Cases include disjoint
+packet support, zero support, one-sided variance pairs and frame rejection.
+Mismatched stream times and an incompatible output descriptor must stop the run.
+
+With the runtime settings above, run all five cases with:
+
+```sh
+PILOTPROXY_N2_TEN_SECONDS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  python -m pytest tests/test_dtv_n2_pipeline.py -q
+```
+
+The longer case processes 480 actual 8192-sample CHORD blocks across four
+frequencies and 128 inputs, producing two bins of 10.0663296 seconds per
+frequency. It repeats eight voltage seeds and uses synthetic detector calibration,
+identity input ordering and no fringestopping. This checks arithmetic and
+scheduling; it does not establish independent-noise precision, physical
+calibration, live throughput or Pathfinder acceptance.
