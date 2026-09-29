@@ -45,7 +45,7 @@ cudaUpchannelize::cudaUpchannelize(Config& config, const std::string& unique_nam
             "The samples_per_data_set config setting must be {:d} for the CUDA Upchannelizer",
             nsamples));
 
-    size_t ngains = _num_local_freq * _upchan_factor;
+    size_t ngains = static_cast<size_t>(_num_local_freq) * _upchan_factor;
     if (gains.size() == 0) {
         for (size_t i = 0; i < ngains; i++)
             gains.push_back(gain0);
@@ -61,7 +61,7 @@ cudaUpchannelize::cudaUpchannelize(Config& config, const std::string& unique_nam
     // 2 complex terms, int4+4
     voltage_input_len = (size_t)_samples_per_data_set * P * _num_local_freq * _num_dishes;
     voltage_output_len = voltage_input_len;
-    info_len = (size_t)(threads_x * threads_y * blocks_x * sizeof(int32_t));
+    info_len = sizeof(int32_t) * threads_x * threads_y * blocks_x;
 
     host_info.resize(_gpu_buffer_depth);
     for (int i = 0; i < _gpu_buffer_depth; i++)

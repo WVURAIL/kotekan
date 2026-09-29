@@ -9,3 +9,5 @@ Files not used in Kotekan (tests etc.) have been removed.
 This directory has the same layout as the upstream repository. To
 update this directory, copy the respective files from the upstream
 repository.
+
+Local fix: padded thread counts use wide arithmetic in diagnostic output.
