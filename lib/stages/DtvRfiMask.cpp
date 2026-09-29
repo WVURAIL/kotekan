@@ -11,6 +11,8 @@
 
 #include <cstring>
 #include <functional>
+#include <limits>
+#include <set>
 #include <vector>
 
 /**
@@ -47,7 +49,7 @@ public:
         rfi->register_consumer(unique_name);
         dtv->register_consumer(unique_name);
         output->register_producer(unique_name);
-        if (rfi->frame_size != size_t(1024 * frequencies) || dtv->frame_size != size_t(frequencies)
+        if (rfi->frame_size != size_t(frequencies) * 1024 || dtv->frame_size != size_t(frequencies)
             || output->frame_size != rfi->frame_size)
             FATAL_ERROR("DtvRfiMask buffer sizes do not match one detector block");
         const auto desc =
@@ -74,19 +76,26 @@ public:
                 break;
             const auto rm = get_chord_metadata(rfi, rfi_id);
             const auto dm = get_chord_metadata(dtv, dtv_id);
+            if (!rm || !dm)
+                FATAL_ERROR("DtvRfiMask requires CHORD metadata on both streams");
+            for (const auto& meta : {rm, dm})
+                if (!meta->has_fpga_seq_num() || !meta->has_time_downsampling_fpga())
+                    FATAL_ERROR("DtvRfiMask missing time identity");
             rm->check_frame_desc(rfi->get_frame_desc<kotekan::GenericNDArray>());
             dm->check_frame_desc(dtv->get_frame_desc<kotekan::GenericNDArray>());
             const auto seq = rm->get_fpga_seq_num();
             const auto rp = rm->get_time_downsampling_fpga();
             const auto dp = dm->get_time_downsampling_fpga();
             if (seq < 0 || dp <= 0 || rp <= 0 || rp % 1024 || int64_t(rp) * 8 != dp
-                || seq != dm->get_fpga_seq_num())
+                || seq > std::numeric_limits<int64_t>::max() - dp || seq != dm->get_fpga_seq_num())
                 FATAL_ERROR("DtvRfiMask time alignment mismatch");
             if (!rm->has_coarse_freq() || !dm->has_coarse_freq()
                 || rm->get_coarse_freq().size() != size_t(frequencies)
                 || rm->get_coarse_freq() != dm->get_coarse_freq())
                 FATAL_ERROR("DtvRfiMask frequency identity mismatch");
             const auto freq = rm->get_coarse_freq();
+            if (std::set<int>(freq.begin(), freq.end()).size() != freq.size())
+                FATAL_ERROR("DtvRfiMask duplicate frequency identity");
             for (const auto& meta : {rm, dm}) {
                 if (!meta->has_freq_upchan_factor() || !meta->has_freq_upchan_index()
                     || meta->get_freq_upchan_factor() != std::vector<int>(frequencies, 1)
@@ -96,6 +105,10 @@ public:
             if (started && (seq != next_seq || dp != period || freq != bound_freq))
                 FATAL_ERROR("DtvRfiMask discontinuous time or frequency identity");
 
+            for (int f = 0; f < frequencies; ++f)
+                if (reject[f] > 1)
+                    FATAL_ERROR("DtvRfiMask decision is not 0 or 1");
+
             auto* combined = output->wait_for_empty_frame(unique_name, out_id);
             if (!combined)
                 break;
@@ -103,7 +116,7 @@ public:
             for (int t = 0; t < 8; ++t)
                 for (int f = 0; f < frequencies; ++f)
                     if (reject[f])
-                        std::memset(combined + (t * frequencies + f) * 128, 0, 128);
+                        std::memset(combined + (size_t(t) * frequencies + f) * 128, 0, 128);
             output->allocate_new_metadata_object(out_id);
             const auto om = get_chord_metadata(output, out_id);
             om->deepCopy(rm);

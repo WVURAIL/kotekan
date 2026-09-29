@@ -45,3 +45,8 @@ The mask stage's own tests need the same two variables:
 .. code-block:: sh
 
     python3 -m pytest tests/test_dtv_rfi_mask.py -q
+
+CPU checks cover pipeline metadata, mask composition and input-health counts.
+Hosted CI also verifies the vendored source hashes. CUDA execution runs only
+through the manually confirmed ``Trusted GPU tests`` workflow, using the
+runner isolation described in ``.github/workflows/README.md``.
