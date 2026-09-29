@@ -14,6 +14,11 @@ on:
       runs_on: # Base runner image, ubuntu-latest if not specified
         required: false
         type: string
+      trusted_gpu:
+        description: Allow privileged GPU testing of a manually selected default-branch revision
+        required: false
+        type: boolean
+        default: false
       container_image: # Typically, the cpu or gpu kotekan docker image.
         required: true
         type: string
@@ -33,14 +38,18 @@ permissions:
 
 jobs:
   test:
-    runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+    if: >-
+      ${{ !contains(inputs.runs_on, 'self-hosted') ||
+          (inputs.trusted_gpu && github.event_name == 'workflow_dispatch' &&
+           github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    runs-on: ${{ startsWith(inputs.runs_on, '[') && fromJSON(inputs.runs_on) || inputs.runs_on || 'ubuntu-latest' }}
     container:
       image: ${{ inputs.container_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: >-
-        ${{ contains(inputs.runs_on || '', 'self-hosted')
+        ${{ inputs.trusted_gpu
             && '--privileged --mount type=bind,source=/data,target=/data --label ci-runner=kotekan'
             || '--label ci-runner=kotekan' }}
     defaults:
@@ -56,10 +65,10 @@ jobs:
     steps:
       
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Cache ccache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: .ccache
           key: ccache-${{ inputs.ccache_key }}-${{ github.sha }}
@@ -85,7 +94,7 @@ jobs:
           echo "==========="
 
       - name: Verify architecture is x86_64
-        if: ${{ !contains(runner.labels, 'self-hosted') }}
+        if: ${{ !inputs.trusted_gpu }}
         run: |
           arch=$(uname -m)
           echo "Detected architecture: $arch"

@@ -8,3 +8,21 @@
 - `schedule.yaml`: Daily cron entry point (runs from the default branch) that dispatches `scheduled_tasks.yaml` and `iwyu.yaml`
 - `scheduled_tasks.yaml`: Tasks dispatched by the scheduler on the default branch (`develop`)
 - `test_kotekan_build.yaml`: Reusable workflow that builds kotekan and runs post-build commands
+
+## GPU testing
+
+Normal pull requests and pushes run on GitHub-hosted CPU runners. GPU tests
+are available through `gpu_tests.yaml` with an explicit confirmation, only
+for the repository's default branch. Review and merge the change before
+requesting a GPU run; the workflow checks out that selected commit.
+
+Provision an isolated Linux x86-64 runner with the `kotekan-gpu` label,
+CUDA/OpenCL support, Docker, and the required `/data` test directory.
+The runner must also have the standard `self-hosted`, `Linux`, and `X64` labels.
+No matching runner is provisioned by this workflow. Confirm availability
+before dispatching; a missing runner leaves the job queued.
+
+These tests require a privileged container and mount `/data`. Keep credentials,
+personal files, and sensitive network services away from the runner. Restrict
+its runner group to the reviewed GPU workflow. Do not run unreviewed pull
+requests on this hardware. The scheduled context logger uses hosted runners.

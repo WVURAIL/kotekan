@@ -33,14 +33,3 @@ jobs:
           echo "Schedule type: ${{ github.event.inputs.schedule_type }}"
           echo "Branch: ${{ github.ref_name }}"
           echo "Actor: ${{ github.actor }}"
-
-  log-selfhosted-execution:
-    runs-on: self-hosted
-    steps:
-      - name: Log execution context
-        run: |
-          echo "Workflow triggered by: ${{ github.event.inputs.trigger_source }}"
-          echo "Triggered at: ${{ github.event.inputs.triggered_at }}"
-          echo "Schedule type: ${{ github.event.inputs.schedule_type }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Actor: ${{ github.actor }}"

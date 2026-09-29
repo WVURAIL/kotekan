@@ -42,7 +42,6 @@ jobs:
       ccache_key: ${{ matrix.ccache_key }}
       cmake_defs: ${{ matrix.cmake_defs }}
       post_build: ${{ matrix.post_build }}
-      runs_on: ${{ matrix.runs_on }} # Optional, but for these tests should generally be ubuntu-latest (GH)
     strategy:
       fail-fast: false
       matrix:
@@ -216,7 +215,6 @@ jobs:
       ccache_key: ${{ matrix.ccache_key }}
       cmake_defs: ${{ matrix.cmake_defs }}
       post_build: ${{ matrix.post_build }}
-      runs_on: ${{ matrix.runs_on }} # Optional, but for these tests should generally be ubuntu-latest (GH)
     strategy:
       fail-fast: false
       matrix:
@@ -272,76 +270,6 @@ jobs:
               bash $GITHUB_WORKSPACE/tests/boost/run_boost_tests.sh -v -t "${TEST_TIMEOUT}" $GITHUB_WORKSPACE/build-2404/tests/boost
 
 
-  kotekan-gpu-tests:
-    name: "GPU"
-    needs: kotekan-docker
-    uses: ./.github/workflows/test_kotekan_build.yaml
-    with:
-      container_image: ${{ needs.kotekan-docker.outputs.docker_gpu_img_name }}
-      ccache_key: ${{ matrix.ccache_key }}
-      cmake_defs: ${{ matrix.cmake_defs }}
-      post_build: ${{ matrix.post_build }}
-      runs_on: ${{ matrix.runs_on }}
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-
-          # Test gcc build + CUDA/OpenCL
-          - id: test-gcc-cuda-opencl
-            ccache_key: kotekan-test-gcc-gpu
-            cmake_defs: >-
-              -DCMAKE_BUILD_TYPE=Test -DWERROR=ON
-              -DCMAKE_LINK_WHAT_YOU_USE=ON -DCCACHE=ON
-              -DUSE_OMP=ON -DUSE_NUMA=ON -DNO_MEMLOCK=ON
-              -DUSE_CUDA=ON -DUSE_HIP=OFF -DUSE_OPENCL=ON
-              -DUSE_ASDF=ON -DUSE_HDF5=ON -DUSE_GDAL=ON
-              -DUSE_AIRSPY=ON -DUSE_LAPACK_BLAZE=ON -DUSE_FFTW=ON -DUSE_JULIA=OFF -DUSE_DPDK=ON
-              -DWITH_TESTS=ON -DWITH_BOOST_TESTS=ON
-            post_build: ""   # Any OpenCL-specific commands to test?
-            runs_on: self-hosted
-
-          # run yamls in config/ci-tests/gpu_batch
-          - id: test-gcc-gpu-yaml
-            ccache_key: kotekan-test-gcc-yaml
-            cmake_defs: >-
-              -DCMAKE_BUILD_TYPE=Test -DWERROR=ON
-              -DCMAKE_LINK_WHAT_YOU_USE=ON -DCCACHE=ON
-              -DUSE_OMP=ON -DUSE_NUMA=ON -DNO_MEMLOCK=ON
-              -DUSE_CUDA=ON -DUSE_HIP=OFF -DUSE_OPENCL=ON
-              -DUSE_ASDF=ON -DUSE_HDF5=ON -DUSE_GDAL=ON
-              -DUSE_AIRSPY=ON -DUSE_LAPACK_BLAZE=ON -DUSE_FFTW=ON -DUSE_JULIA=OFF -DUSE_DPDK=ON
-              -DWITH_TESTS=ON -DWITH_BOOST_TESTS=OFF
-            post_build: |
-              bash $GITHUB_WORKSPACE/config/ci-tests/run_tests.sh $GITHUB_WORKSPACE/build-2404/kotekan/kotekan 2m $GITHUB_WORKSPACE/config/ci-tests/gpu_batch
-            runs_on: self-hosted
-
-          # run yamls in config/ci-tests/gpu_batch
-          - id: release-gcc-gpu-yaml
-            ccache_key: kotekan-release-gcc-yaml
-            cmake_defs: >-
-              -DCMAKE_BUILD_TYPE=Release -DWERROR=ON
-              -DCMAKE_LINK_WHAT_YOU_USE=ON -DCCACHE=ON
-              -DUSE_OMP=ON -DUSE_NUMA=ON -DNO_MEMLOCK=ON
-              -DUSE_CUDA=ON -DUSE_HIP=OFF -DUSE_OPENCL=ON
-              -DUSE_ASDF=ON -DUSE_HDF5=ON -DUSE_GDAL=ON
-              -DUSE_AIRSPY=ON -DUSE_LAPACK_BLAZE=ON -DUSE_FFTW=ON -DUSE_JULIA=OFF -DUSE_DPDK=ON
-              -DWITH_TESTS=ON -DWITH_BOOST_TESTS=OFF
-            post_build: |
-              bash $GITHUB_WORKSPACE/config/ci-tests/run_tests.sh $GITHUB_WORKSPACE/build-2404/kotekan/kotekan 2m $GITHUB_WORKSPACE/config/ci-tests/gpu_batch
-            runs_on: self-hosted
-
-          # /data dir test"
-          - id: data-test
-            cmake_defs: ""
-            post_build: |
-              # Try something with the persistent /data directory.
-              touch /data/tmp
-              ls /data
-              rm /data/tmp
-            runs_on: self-hosted
-
-
   # Run the linter as its own top-level job (rather than as a matrix entry
   # inside kotekan-cpu-tests) so the auto-lint-fix job below can run conditioned
   # on this job's result.
@@ -378,12 +306,12 @@ jobs:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout source branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.SOURCE_SHA }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -411,7 +339,7 @@ jobs:
         run: sudo chown -R "$(id -u):$(id -g)" .
 
       - name: Open auto-lint pull request
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "auto-lint: apply formatter fixes"
