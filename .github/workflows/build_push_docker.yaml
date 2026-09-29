@@ -73,7 +73,7 @@ jobs:
       # Has the Dockerfile ever changed vs base branch? (for tag selection)
       - name: Check Dockerfile diff vs base
         id: changed-vs-base
-        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         with:
           files: |
             tools/docker/24.04/Dockerfile
@@ -81,7 +81,7 @@ jobs:
        # Has the Dockerfile changed in the latest push? (for rebuild decision)
       - name: Check Dockerfile diff in latest push
         id: changed-latest
-        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         with:
           files: |
             tools/docker/24.04/Dockerfile
