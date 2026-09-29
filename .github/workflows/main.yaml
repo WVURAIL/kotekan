@@ -58,7 +58,8 @@ jobs:
               -DUSE_ASDF=OFF -DUSE_HDF5=OFF -DUSE_GDAL=OFF
               -DUSE_AIRSPY=OFF -DUSE_LAPACK_BLAZE=OFF -DUSE_FFTW=OFF -DUSE_JULIA=OFF -DUSE_DPDK=OFF
               -DWITH_TESTS=ON -DWITH_BOOST_TESTS=OFF
-            post_build: ""   # nothing to run
+            post_build: |
+              python3 $GITHUB_WORKSPACE/tools/check_vendored_pilotproxy.py --offline
 
           # Test gcc build + serial pytests
           - id: test_gcc_serial_pytests
