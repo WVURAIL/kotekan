@@ -48,7 +48,7 @@ BasebandWriter::BasebandWriter(Config& config, const std::string& unique_name,
     bytes_written_metric(
         Metrics::instance().add_counter("kotekan_writer_bytes_total", unique_name)) {
     size_t metadata_size = BasebandMetadata().get_serialized_size();
-    _frame_size = config.get<uint32_t>(unique_name, "samples_per_data_set")
+    _frame_size = static_cast<size_t>(config.get<uint32_t>(unique_name, "samples_per_data_set"))
                       * config.get<uint32_t>(unique_name, "num_elements")
                   + metadata_size;
     in_buf->register_consumer(unique_name);

@@ -478,10 +478,10 @@ void gpuSimulateRFISK::main_thread() {
                     if (bf_mask[e] && sigma > 0.0) {
                         uint64_t s0 = rfi_s012[s012_idx + e];
                         n += s0;
-                        w_sk_tilde += s0 * sk;
-                        w_bias_tilde += s0 * bias;
+                        w_sk_tilde += static_cast<double>(s0) * sk;
+                        w_bias_tilde += static_cast<double>(s0) * bias;
                         // variance gets weighted by N^2 instead of N.
-                        w2_sigma2_tilde += s0 * s0 * sigma * sigma;
+                        w2_sigma2_tilde += static_cast<double>(s0) * s0 * sigma * sigma;
                     }
                 } // e
 

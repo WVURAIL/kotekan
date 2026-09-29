@@ -53,9 +53,9 @@ processFeedGains::processFeedGains(Config& config, const std::string& unique_nam
                         gain_buffers.at(0)->frame_size);
         }
 
-        if (buf->frame_size != num_local_freq * num_elements * num_components * sizeof(float)) {
+        if (buf->frame_size != sizeof(float) * num_local_freq * num_elements * num_components) {
             FATAL_ERROR("Input buffer does not have the expected size. Expected {:d}, got {:d}",
-                        num_local_freq * num_elements * num_components * sizeof(float),
+                        sizeof(float) * num_local_freq * num_elements * num_components,
                         buf->frame_size);
         }
     }
@@ -75,7 +75,8 @@ processFeedGains::processFeedGains(Config& config, const std::string& unique_nam
                     in_mask_size, in_mask_buf->frame_size);
     }
 
-    out_num_values = num_beams * num_elements * num_local_freq * upchan_factor * num_components;
+    out_num_values = static_cast<size_t>(num_beams) * num_elements * num_local_freq * upchan_factor
+                     * num_components;
     auto out_buf_size = out_num_values * sizeof(float16_t);
     if (out_buf->frame_size != out_buf_size) {
         FATAL_ERROR("Output buffer does not have the expected shape. Expected {:d}, got {:d}",
@@ -92,9 +93,9 @@ processFeedGains::processFeedGains(Config& config, const std::string& unique_nam
 
 
 void processFeedGains::copy_upchannelize(float* frame, size_t beam_id) {
-    size_t in_fstride = num_elements * num_components;
+    size_t in_fstride = static_cast<size_t>(num_elements) * num_components;
     // duplicate the gains at each upchan = 0 bin for each freq
-    size_t out_fstride = upchan_factor * num_elements * num_components;
+    size_t out_fstride = static_cast<size_t>(upchan_factor) * num_elements * num_components;
 
     // data starting at this beam_id
     float16_t* out_ptr = gain_store_buf.data() + beam_id * num_local_freq * out_fstride;
@@ -110,7 +111,8 @@ void processFeedGains::copy_upchannelize(float* frame, size_t beam_id) {
 
     // conjugate if gains are complex
     if (conjugate_gains && num_components > 1) {
-        size_t num_beam_elements = num_elements * num_local_freq * upchan_factor * num_components;
+        size_t num_beam_elements =
+            static_cast<size_t>(num_elements) * num_local_freq * upchan_factor * num_components;
 
         for (size_t i = 1; i < num_beam_elements; i += 2) {
             float16_t* u_ptr = out_ptr + i;
@@ -173,8 +175,8 @@ void processFeedGains::main_thread() {
                     auto meta_in = get_chord_metadata(buf, frame_id);
                     auto coarse_freq_in = meta_in->get_coarse_freq();
 
-                    for (uint64_t f = 0; f < num_local_freq * upchan_factor; ++f) {
-                        int idx = f / upchan_factor;
+                    for (size_t f = 0; f < coarse_freq.size(); ++f) {
+                        size_t idx = f / upchan_factor;
                         coarse_freq[f] = coarse_freq_in[idx];
                     }
                     set_coarse_freqs_once = false;
@@ -247,7 +249,7 @@ void processFeedGains::main_thread() {
             if (mask_store_buf[e] == 0) {
                 // zero out this element for all other indices
                 for (size_t k = num_components * e; k < out_num_values;
-                     k += num_components * num_elements) {
+                     k += static_cast<size_t>(num_components) * num_elements) {
                     for (size_t j = 0; j < num_components; ++j) {
                         out_frame[k + j] = float16_t(0.0);
                     }

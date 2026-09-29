@@ -99,9 +99,9 @@ void networkInputPowerStream::main_thread() {
                     if (len != packet_length) {
                         ERROR("BAD UDP PACKET! {:d} {:d}", len, errno);
                     } else {
-                        memcpy(frame + t * elems * (freqs + 1) * sizeof(uint)
-                                   + e * (freqs + 1) * sizeof(uint),
-                               local_buf, packet_length);
+                        const size_t offset =
+                            (static_cast<size_t>(t) * elems + e) * (static_cast<size_t>(freqs) + 1);
+                        memcpy(frame + offset * sizeof(uint), local_buf, packet_length);
                     }
                 }
             }

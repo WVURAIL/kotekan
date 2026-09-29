@@ -41,7 +41,7 @@ pip install -r python/scripts/js_viewer/requirements.txt
 VIEWER_PYTHON=/path/to/venv/bin/python ./kotekan -c config/airspy_crosscorr.yaml
 ```
 
-Then open <http://HOST:8080/>.
+Then open <http://localhost:8080/>.
 
 To run it standalone, start it **before** kotekan connects (it blocks on
 `accept`):
@@ -64,6 +64,19 @@ python livebeam_server.py --lag-align-stage lag_align  # crosscorr extras
 The browser calls kotekan's REST server cross-origin, so list the viewer
 origin(s) under `/rest_server/cors_allow_origins` in the kotekan config (see the
 airspy configs) — otherwise the browser blocks the responses.
+
+All three viewer listeners bind to `127.0.0.1` by default. For a remote
+browser, set `--listen-host` to the server's address on a trusted network.
+For a remote kotekan producer, also set `--kotekan-host` to that interface.
+For example:
+
+```sh
+python livebeam_server.py --listen-host 192.0.2.10 --kotekan-host 192.0.2.10
+```
+
+These listeners do not authenticate clients. Keep remote access on a trusted
+network or use an SSH tunnel. `tools/pyPeekTCP.py` follows the same local-only
+default; select its TCP interface with `--host` and port with `--port`.
 
 ## Useful options
 

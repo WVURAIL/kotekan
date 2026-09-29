@@ -12,6 +12,7 @@
 #include <cstring>      // for memset
 #include <ctime>        // for gmtime
 #include <gsl-lite.hpp> // for span
+#include <limits>       // for numeric_limits
 #include <map>          // for map
 #include <set>          // for set
 #include <stdexcept>    // for runtime_error
@@ -41,7 +42,7 @@ HFBFrameView::HFBFrameView(Buffer* buf, int frame_id) :
     // view
     size_t required_size = buffer_layout.first;
 
-    if (required_size > (uint32_t)buffer->frame_size) {
+    if (required_size > buffer->frame_size) {
 
         std::string s = fmt::format(
             fmt("Hyper fine beam buffer [{:s}] too small. Must be a minimum of {:d} bytes "
@@ -116,11 +117,17 @@ void HFBFrameView::copy_data(HFBFrameView frame_to_copy, const std::set<HFBField
 
 struct_layout<HFBField> HFBFrameView::calculate_buffer_layout(uint32_t num_beams,
                                                               uint32_t num_subfreq) {
+    constexpr size_t max_values = std::numeric_limits<size_t>::max() / (2 * sizeof(float));
+    if (num_subfreq != 0 && num_beams > max_values / num_subfreq) {
+        throw std::overflow_error("HFB frame dimensions exceed the addressable size");
+    }
+    const size_t num_values = static_cast<size_t>(num_beams) * num_subfreq;
+
     // TODO: get the types of each element using a template on the member
     // definition
     std::vector<std::tuple<HFBField, size_t, size_t>> buffer_members = {
-        std::make_tuple(HFBField::hfb, sizeof(float), num_beams * num_subfreq),
-        std::make_tuple(HFBField::weight, sizeof(float), num_beams * num_subfreq)};
+        std::make_tuple(HFBField::hfb, sizeof(float), num_values),
+        std::make_tuple(HFBField::weight, sizeof(float), num_values)};
 
     return struct_alignment(buffer_members);
 }

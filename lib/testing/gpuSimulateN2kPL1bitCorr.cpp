@@ -256,9 +256,10 @@ void gpuSimulateN2kPL1bitCorr::main_thread() {
         meta_out->type = kotekan::int32;
         meta_out->dims = 5;
         assert(meta_out->dims <= CHORD_META_MAX_DIM);
-        meta_out->set_array_dimension(0, n_integrations, "Tc",
-                                      div_noremainder(meta_in->get_time_downsampling_fpga(), 64)
-                                          * _sub_integration_ntime);
+        meta_out->set_array_dimension(
+            0, n_integrations, "Tc",
+            static_cast<std::ptrdiff_t>(div_noremainder(meta_in->get_time_downsampling_fpga(), 64))
+                * _sub_integration_ntime);
         meta_out->set_array_dimension(1, nf, "F", 1);
         meta_out->set_array_dimension(2, n_blocks, "D8Phi", 64);
         meta_out->set_array_dimension(3, _blocksize, "D8Plo1", 8);

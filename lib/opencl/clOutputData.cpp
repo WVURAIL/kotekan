@@ -40,8 +40,8 @@ cl_event clOutputData::execute(cl_event pre_event) {
     pre_execute();
 
     int buf_index = gpu_frame_id % output_buffer->num_frames;
-    uint32_t output_len = _num_local_freq * _num_blocks * (_block_size * _block_size) * 2
-                          * _num_data_sets * sizeof(int32_t);
+    size_t output_len = static_cast<size_t>(_num_local_freq) * _num_blocks * _block_size
+                        * _block_size * 2 * _num_data_sets * sizeof(int32_t);
 
     cl_mem gpu_output_frame =
         device.get_gpu_memory_array("output", gpu_frame_id, _gpu_buffer_depth, output_len);

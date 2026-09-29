@@ -113,7 +113,8 @@ void rfiAVXVDIF::parallelSpectralKurtosis(uint32_t loop_idx, uint32_t loop_lengt
     uint32_t temp_buffer[_num_local_freq * _num_elements];
     uint32_t sq_temp_buffer[_num_local_freq * _num_elements];
     // Perform fast SK measurement
-    for (uint32_t i = loop_idx * loop_length; i < (loop_idx + 1) * loop_length; i++) {
+    for (size_t i = static_cast<size_t>(loop_idx) * loop_length;
+         i < (static_cast<size_t>(loop_idx) + 1) * loop_length; i++) {
         fastSKVDIF(in_local + (i * _sk_step * PACKET_LEN * _num_elements), temp_buffer,
                    sq_temp_buffer, (float*)(out_local + i * _num_local_freq * sizeof(float)));
     }

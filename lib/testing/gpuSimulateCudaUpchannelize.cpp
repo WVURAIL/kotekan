@@ -41,7 +41,7 @@ gpuSimulateCudaUpchannelize::gpuSimulateCudaUpchannelize(Config& config,
     float gain0 = config.get_default<float>(unique_name, "freq_gains", 1.);
     std::vector<float> gains =
         config.get_default<std::vector<float>>(unique_name, "freq_gains", std::vector<float>());
-    size_t ngains = _num_local_freq * _upchan_factor;
+    size_t ngains = static_cast<size_t>(_num_local_freq) * _upchan_factor;
     if (gains.size() == 0) {
         for (size_t i = 0; i < ngains; i++)
             gains.push_back(gain0);

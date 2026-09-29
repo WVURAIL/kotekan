@@ -122,7 +122,8 @@ cudaPLMaskAccumulator::cudaPLMaskAccumulator(kotekan::Config& config,
     pl_counts_name(config.get<std::string>(unique_name, "pl_counts_name")),
     // Buffers
     pl_mask(pl_mask_name, "pl_mask",
-            std::array<std::ptrdiff_t, 5>{buffer_depth * div_noremainder(num_times, 2 * 64),
+            std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth)
+                                              * div_noremainder(num_times, 2 * 64),
                                           div_noremainder(num_frequencies, 4), num_polarizations,
                                           div_noremainder(num_dishes, 8), 64 / 8},
             std::array<std::string, 5>{"T2hi64", "F4", "P", "D8", "T2lo64"}, {128, 4, 1, 8, 16},
@@ -227,7 +228,8 @@ cudaEvent_t cudaPLMaskAccumulator::execute(cudaPipelineState& /*pipestate*/,
         gpu_frame_id, T, Tmin, Tpl_offset, 0);
 
     n2k::launch_s0_kernel((ulong*)pl_counts_memory, (const ulong*)(pl_mask_memory + Tpl_offset), T,
-                          0, Tsize, num_frequencies, num_dishes * num_polarizations,
+                          0, Tsize, num_frequencies,
+                          static_cast<std::ptrdiff_t>(num_dishes) * num_polarizations,
                           sub_integration_ntime, F_stride, device.getStream(cuda_stream_id));
 #ifdef DEBUGGING
     CHECK_CUDA_ERROR(cudaStreamSynchronize(device.getStream(cuda_stream_id)));

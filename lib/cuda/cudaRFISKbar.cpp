@@ -123,26 +123,32 @@ cudaRFISKbar::cudaRFISKbar(kotekan::Config& config, const std::string& unique_na
             std::array<std::ptrdiff_t, 3>{buffer_depth * 1, num_polarizations, num_dishes},
             std::array<std::string, 3>{"Tbf", "P", "D"},
             std::array<std::ptrdiff_t, 3>{bf_mask_lifetime_in_samples, 1, 1}, *this),
-    rfi_S012bar(rfi_S012bar_name, "S012bar",
-                std::array<std::ptrdiff_t, 5>{buffer_depth * rfi_num_times_bar, num_frequencies, 3,
-                                              num_polarizations, num_dishes},
-                std::array<std::string, 5>{"Trfibar", "F", "S", "P", "D"},
-                std::array<std::ptrdiff_t, 5>{
-                    rfi_downsampling_factor * rfi_second_downsampling_factor, 1, 1, 1, 1},
-                *this),
-    rfi_SKbar(rfi_SKbar_name, "SKbar",
-              std::array<std::ptrdiff_t, 5>{buffer_depth * rfi_num_times_bar, num_frequencies, 3,
-                                            num_polarizations, num_dishes},
-              std::array<std::string, 5>{"Trfibar", "F", "SK", "P", "D"},
-              std::array<std::ptrdiff_t, 5>{
-                  rfi_downsampling_factor * rfi_second_downsampling_factor, 1, 1, 1, 1},
-              *this),
+    rfi_S012bar(
+        rfi_S012bar_name, "S012bar",
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times_bar,
+                                      num_frequencies, 3, num_polarizations, num_dishes},
+        std::array<std::string, 5>{"Trfibar", "F", "S", "P", "D"},
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(rfi_downsampling_factor)
+                                          * rfi_second_downsampling_factor,
+                                      1, 1, 1, 1},
+        *this),
+    rfi_SKbar(
+        rfi_SKbar_name, "SKbar",
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times_bar,
+                                      num_frequencies, 3, num_polarizations, num_dishes},
+        std::array<std::string, 5>{"Trfibar", "F", "SK", "P", "D"},
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(rfi_downsampling_factor)
+                                          * rfi_second_downsampling_factor,
+                                      1, 1, 1, 1},
+        *this),
     rfi_SKbartilde(
         rfi_SKbartilde_name, "SKbartilde",
-        std::array<std::ptrdiff_t, 3>{buffer_depth * rfi_num_times_bar, num_frequencies, 3},
+        std::array<std::ptrdiff_t, 3>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times_bar,
+                                      num_frequencies, 3},
         std::array<std::string, 3>{"Trfibar", "F", "SK"},
-        std::array<std::ptrdiff_t, 3>{rfi_downsampling_factor * rfi_second_downsampling_factor, 1,
-                                      1},
+        std::array<std::ptrdiff_t, 3>{static_cast<std::ptrdiff_t>(rfi_downsampling_factor)
+                                          * rfi_second_downsampling_factor,
+                                      1, 1},
         *this),
     // Kernels
     skKernel(n2k::SkKernel::Params{
@@ -151,7 +157,7 @@ cudaRFISKbar::cudaRFISKbar(kotekan::Config& config, const std::string& unique_na
         config.get<double>(unique_name, "rfi_feed_averaged_min_good_frac"),
         config.get<double>(unique_name, "rfi_mu_min"),
         config.get<double>(unique_name, "rfi_mu_max"),
-        rfi_downsampling_factor * rfi_second_downsampling_factor,
+        static_cast<std::ptrdiff_t>(rfi_downsampling_factor) * rfi_second_downsampling_factor,
     }),
     did_set_metadata(false)
 //

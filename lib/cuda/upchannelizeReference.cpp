@@ -4,6 +4,7 @@
 #include <cassert>   // for assert
 #include <cmath>     // for cos, sin, nearbyint, M_PI
 #include <complex>   // for complex
+#include <cstddef>   // for ptrdiff_t
 #include <cstdint>   // for int8_t, uint8_t
 #include <vector>    // for vector
 
@@ -39,10 +40,11 @@ std::vector<float> upchan_window(const int num_taps, const int upchannelization_
     assert(M > 0);
     assert(U > 0);
 
-    std::vector<float> window(M * U);
-    for (int s = 0; s < M * U; ++s) {
+    const std::ptrdiff_t window_size = static_cast<std::ptrdiff_t>(M) * U;
+    std::vector<float> window(window_size);
+    for (std::ptrdiff_t s = 0; s < window_size; ++s) {
         // Normalized to (-1/2, +1/2); see `Wkernel` in `julia/kernels/upchan.jl:76`.
-        const float sp = (s - (M * U - 1) / float(2)) / float(M * U);
+        const float sp = (s - (window_size - 1) / float(2)) / float(window_size);
         const float cosine = std::cos(float(M_PI) * sp);
         window.at(s) = cosine * cosine * sinc_normalized(float(M) * sp) / float(U);
     }
@@ -67,12 +69,13 @@ void upchannelize_reference(const std::complex<float>* const E, const float* con
     // Precompute the phase factor exp(-2 pi i (u - (U-1)/2) s / U). It depends only on
     // (u, s), not on time, polarization or dish, so it is shared across the whole call.
     // See the derivation in `upchannelizeReference.hpp`.
-    std::vector<std::complex<float>> phases(U * M * U);
+    const std::ptrdiff_t window_size = static_cast<std::ptrdiff_t>(M) * U;
+    std::vector<std::complex<float>> phases(U * window_size);
     for (int u = 0; u < U; ++u) {
-        for (int s = 0; s < M * U; ++s) {
+        for (std::ptrdiff_t s = 0; s < window_size; ++s) {
             const float angle =
                 -2.0f * float(M_PI) * (float(u) - float(U - 1) / 2.0f) * float(s) / float(U);
-            phases.at(u * (M * U) + s) = std::complex<float>(std::cos(angle), std::sin(angle));
+            phases.at(u * window_size + s) = std::complex<float>(std::cos(angle), std::sin(angle));
         }
     }
 
@@ -86,11 +89,11 @@ void upchannelize_reference(const std::complex<float>* const E, const float* con
 
     for (int tbar = 0; tbar < num_times_out; ++tbar) {
         for (int u = 0; u < U; ++u) {
-            const std::complex<float>* const phase = phases.data() + u * (M * U);
+            const std::complex<float>* const phase = phases.data() + u * window_size;
             const float G = gain[u];
             for (int p = 0; p < P; ++p) {
                 std::fill(acc.begin(), acc.end(), std::complex<float>(0.0f, 0.0f));
-                for (int s = 0; s < M * U; ++s) {
+                for (std::ptrdiff_t s = 0; s < window_size; ++s) {
                     // Eqn. (83): the output at `tbar` reads M*U input samples starting at
                     // U*tbar, i.e. it looks (M-1)*U samples past its own block.
                     const long t = long(U) * tbar + s;

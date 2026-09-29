@@ -15,8 +15,8 @@ clOutputDataZero::clOutputDataZero(Config& config, const std::string& unique_nam
     _num_data_sets = config.get<int>(unique_name, "num_data_sets");
     _num_blocks = config.get<int>(unique_name, "num_blocks");
 
-    output_len = _num_local_freq * _num_blocks * (_block_size * _block_size) * 2 * _num_data_sets
-                 * sizeof(int32_t);
+    output_len = static_cast<size_t>(_num_local_freq) * _num_blocks * _block_size * _block_size * 2
+                 * _num_data_sets * sizeof(int32_t);
     output_zeros = malloc(output_len);
     memset(output_zeros, 0, output_len);
 

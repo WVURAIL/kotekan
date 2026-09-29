@@ -372,7 +372,7 @@ void applyGains::apply_thread() {
                 // was zero and the weight was infinite (which can happen if a channel
                 // was turned off)
                 float wp = weight_factor[ii] * weight_factor[jj];
-                out_weight[idx] = (wp == 0 ? 0.0 : in_weight[idx] * wp);
+                out_weight[idx] = (wp == 0 ? 0.0f : in_weight[idx] * wp);
                 idx++;
             }
             // Update the gains.
@@ -540,7 +540,7 @@ std::pair<std::vector<T>, std::vector<uint32_t>> json_base64_to_array(const json
 template<typename T, typename U = T>
 std::vector<std::vector<U>> unpack_2d(const std::vector<T>& arr1d, uint32_t nr, uint32_t nc) {
 
-    if (nr * nc != arr1d.size()) {
+    if (static_cast<size_t>(nr) * nc != arr1d.size()) {
         throw std::runtime_error(fmt::format(
             "Size of arr1d ({}) does not match number of rows and columns ({} x {}).", nr, nc));
     }
@@ -549,7 +549,7 @@ std::vector<std::vector<U>> unpack_2d(const std::vector<T>& arr1d, uint32_t nr, 
 
     auto b = arr1d.cbegin();
 
-    for (uint32_t i = 0; i < nr; i++) {
+    for (size_t i = 0; i < nr; i++) {
         auto br = b + i * nc;
         arr2d.push_back(std::vector<U>(br, br + nc));
     }

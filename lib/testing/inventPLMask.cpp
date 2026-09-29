@@ -74,7 +74,7 @@ public:
             buffer->allocate_new_metadata_object(frame_id);
             const auto& meta = get_chord_metadata(buffer->get_metadata(frame_id));
             meta->set_from_frame_desc(buffer->get_frame_desc<kotekan::GenericNDArray>());
-            meta->set_fpga_seq_num(frame_index * num_times);
+            meta->set_fpga_seq_num(static_cast<uint64_t>(frame_index) * num_times);
             meta->set_time_downsampling_fpga(2 * 64);
 
             // Fill buffer

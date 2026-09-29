@@ -108,21 +108,23 @@ cudaRFIS012::cudaRFIS012(kotekan::Config& config, const std::string& unique_name
     rfi_S012_name(config.get<std::string>(unique_name, "rfi_S012_name")),
     // Buffers
     pl_mask(pl_mask_name, "pl_mask",
-            std::array<std::ptrdiff_t, 5>{buffer_depth * div_noremainder(num_times, 2 * 64),
+            std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth)
+                                              * div_noremainder(num_times, 2 * 64),
                                           div_noremainder(num_frequencies, 4), num_polarizations,
                                           div_noremainder(num_dishes, 8), 64 / 8},
             std::array<std::string, 5>{"T2hi64", "F4", "P", "D8", "T2lo64"},
             std::array<std::ptrdiff_t, 5>{128, 4, 1, 8, 16}, *this),
     voltage(voltage_name, "E",
-            std::array<std::ptrdiff_t, 4>{buffer_depth * num_times, num_frequencies,
-                                          num_polarizations, num_dishes},
+            std::array<std::ptrdiff_t, 4>{static_cast<std::ptrdiff_t>(buffer_depth) * num_times,
+                                          num_frequencies, num_polarizations, num_dishes},
             std::array<std::string, 4>{"T", "F", "P", "D"},
             std::array<std::ptrdiff_t, 4>{1, 1, 1, 1}, *this),
-    rfi_S012(rfi_S012_name, "S012",
-             std::array<std::ptrdiff_t, 5>{buffer_depth * rfi_num_times, num_frequencies, 3,
-                                           num_polarizations, num_dishes},
-             std::array<std::string, 5>{"Trfi", "F", "S", "P", "D"},
-             std::array<std::ptrdiff_t, 5>{rfi_downsampling_factor, 1, 1, 1, 1}, *this),
+    rfi_S012(
+        rfi_S012_name, "S012",
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times,
+                                      num_frequencies, 3, num_polarizations, num_dishes},
+        std::array<std::string, 5>{"Trfi", "F", "S", "P", "D"},
+        std::array<std::ptrdiff_t, 5>{rfi_downsampling_factor, 1, 1, 1, 1}, *this),
     did_set_metadata(false)
 //
 {
@@ -250,15 +252,16 @@ cudaEvent_t cudaRFIS012::execute(cudaPipelineState& /*pipestate*/,
 
     n2k::launch_s0_kernel((ulong*)rfi_S012_memory + Trfi_offset,
                           (const ulong*)(pl_mask_memory + Tpl_offset), T, 0, Tsize, num_frequencies,
-                          num_dishes * num_polarizations, rfi_downsampling_factor, F_stride,
-                          device.getStream(cuda_stream_id));
+                          static_cast<std::ptrdiff_t>(num_dishes) * num_polarizations,
+                          rfi_downsampling_factor, F_stride, device.getStream(cuda_stream_id));
 #ifdef DEBUGGING
     CHECK_CUDA_ERROR(cudaStreamSynchronize(device.getStream(cuda_stream_id)));
 #endif
-    n2k::launch_s12_kernel((ulong*)(rfi_S012_memory + S_stride + Trfi_offset),
-                           (const uint8_t*)(voltage_memory + T_offset), T, 0, Tsize,
-                           num_frequencies, num_dishes * num_polarizations, rfi_downsampling_factor,
-                           F_stride, offset_encoded, device.getStream(cuda_stream_id));
+    n2k::launch_s12_kernel(
+        (ulong*)(rfi_S012_memory + S_stride + Trfi_offset),
+        (const uint8_t*)(voltage_memory + T_offset), T, 0, Tsize, num_frequencies,
+        static_cast<std::ptrdiff_t>(num_dishes) * num_polarizations, rfi_downsampling_factor,
+        F_stride, offset_encoded, device.getStream(cuda_stream_id));
 #ifdef DEBUGGING
     CHECK_CUDA_ERROR(cudaStreamSynchronize(device.getStream(cuda_stream_id)));
 #endif

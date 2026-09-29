@@ -93,8 +93,8 @@ private:
     float _good_samples_threshold;
 
     /// Stage variables
-    uint32_t total_timesamples;
-    uint32_t total_lost_timesamples;
+    uint64_t total_timesamples;
+    uint64_t total_lost_timesamples;
     uint32_t frame;
     int64_t fpga_seq_num;
     int64_t fpga_seq_num_end;

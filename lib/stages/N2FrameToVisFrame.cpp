@@ -23,8 +23,10 @@
 #include <functional>   // for bind, function
 #include <gsl-lite.hpp> // for span, span_iterator
 #include <iterator>     // for back_insert_iterator, begin, end, back_inserter
+#include <limits>       // for numeric_limits
 #include <memory>       // for shared_ptr, __shared_ptr_access, dynamic_pointer_cast
 #include <numeric>      // for iota
+#include <stdexcept>    // for invalid_argument
 #include <time.h>       // for timespec, time_t, size_t
 #include <tuple>        // for get, tuple
 
@@ -97,12 +99,16 @@ n2FrameToVisFrame::n2FrameToVisFrame(Config& config, const std::string& unique_n
 
     size_t num_elements = inputs.size();
 
+    if (num_elements > static_cast<size_t>(std::numeric_limits<uint16_t>::max()) + 1) {
+        throw std::invalid_argument("Number of inputs exceeds the product index range.");
+    }
+
     // Create the product specification
     std::vector<prod_ctype> prods;
     prods.reserve(num_elements * (num_elements + 1) / 2);
-    for (uint16_t i = 0; i < num_elements; i++) {
-        for (uint16_t j = i; j < num_elements; j++) {
-            prods.push_back({i, j});
+    for (size_t i = 0; i < num_elements; i++) {
+        for (size_t j = i; j < num_elements; j++) {
+            prods.push_back({static_cast<uint16_t>(i), static_cast<uint16_t>(j)});
         }
     }
 

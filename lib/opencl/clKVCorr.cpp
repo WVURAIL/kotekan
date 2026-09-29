@@ -78,15 +78,15 @@ void clKVCorr::build() {
         if (small_array) {
             accum_length = 4096 * 4;
             int num_accum = _samples_per_data_set / accum_length;
-            gws[0] = _num_elements / 4 * _num_local_freq;
-            gws[1] = _num_elements / 4 * num_accum;
+            gws[0] = static_cast<size_t>(_num_elements / 4) * _num_local_freq;
+            gws[1] = static_cast<size_t>(_num_elements / 4) * num_accum;
             gws[2] = _num_blocks;
             lws[0] = _num_elements / 4;
             lws[1] = _num_elements / 4;
             lws[2] = 1;
         } else {
             accum_length = _samples_per_data_set;
-            gws[0] = (_full_complicated ? 16 : 8) * _num_local_freq;
+            gws[0] = static_cast<size_t>(_full_complicated ? 16 : 8) * _num_local_freq;
             gws[1] = (_full_complicated ? 4 : 8);
             gws[2] = _num_blocks;
             lws[0] = (_full_complicated ? 16 : 8);
@@ -100,7 +100,7 @@ void clKVCorr::build() {
     } else if (_data_format == "dot4b") {
         INFO("Running experimental dot-product data");
         int _wi_size = 4;
-        gws[0] = _block_size / _wi_size * _num_local_freq;
+        gws[0] = static_cast<size_t>(_block_size / _wi_size) * _num_local_freq;
         gws[1] = _block_size / _wi_size;
         gws[2] = _num_blocks;
         lws[0] = _block_size / _wi_size;
@@ -139,17 +139,19 @@ void clKVCorr::build() {
 
     CHECK_CL_ERROR(clSetKernelArg(kernel, (cl_uint)4, sizeof(id_y_map), (void*)&id_y_map));
 
-    zeros = (cl_int*)calloc(_num_blocks * _num_local_freq, sizeof(cl_int)); // for the output
-                                                                            // buffers
+    zeros = (cl_int*)calloc(static_cast<size_t>(_num_blocks) * _num_local_freq,
+                            sizeof(cl_int)); // for the output
+                                             // buffers
 }
 
 cl_event clKVCorr::execute(cl_event pre_event) {
     pre_execute();
 
-    uint32_t input_frame_len = _num_elements * _num_local_freq * _samples_per_data_set;
-    uint32_t output_len = _num_local_freq * _num_blocks * (_block_size * _block_size) * 2
-                          * _num_data_sets * sizeof(int32_t);
-    uint32_t presum_len = _num_elements * _num_local_freq * 2 * sizeof(int32_t);
+    size_t input_frame_len =
+        static_cast<size_t>(_num_elements) * _num_local_freq * _samples_per_data_set;
+    size_t output_len = static_cast<size_t>(_num_local_freq) * _num_blocks * _block_size
+                        * _block_size * 2 * _num_data_sets * sizeof(int32_t);
+    size_t presum_len = static_cast<size_t>(_num_elements) * _num_local_freq * 2 * sizeof(int32_t);
 
     cl_mem input_memory =
         device.get_gpu_memory_array("input", gpu_frame_id, _gpu_buffer_depth, input_frame_len);

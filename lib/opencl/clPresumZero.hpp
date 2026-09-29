@@ -14,7 +14,7 @@ public:
     cl_event execute(cl_event param_PrecedeEvent) override;
 
 private:
-    int32_t presum_len;
+    size_t presum_len;
     void* presum_zeros;
 
     // TODO maybe factor these into a CHIME command object class?

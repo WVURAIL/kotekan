@@ -105,18 +105,21 @@ cudaRFIS012bar::cudaRFIS012bar(kotekan::Config& config, const std::string& uniqu
     rfi_S012_name(config.get<std::string>(unique_name, "rfi_S012_name")),
     rfi_S012bar_name(config.get<std::string>(unique_name, "rfi_S012bar_name")),
     // Buffers
-    rfi_S012(rfi_S012_name, "S012",
-             std::array<std::ptrdiff_t, 5>{buffer_depth * rfi_num_times, num_frequencies, 3,
-                                           num_polarizations, num_dishes},
-             std::array<std::string, 5>{"Trfi", "F", "S", "P", "D"},
-             std::array<std::ptrdiff_t, 5>{rfi_downsampling_factor, 1, 1, 1, 1}, *this),
-    rfi_S012bar(rfi_S012bar_name, "S012bar",
-                std::array<std::ptrdiff_t, 5>{buffer_depth * rfi_num_times_bar, num_frequencies, 3,
-                                              num_polarizations, num_dishes},
-                std::array<std::string, 5>{"Trfibar", "F", "S", "P", "D"},
-                std::array<std::ptrdiff_t, 5>{
-                    rfi_downsampling_factor * rfi_second_downsampling_factor, 1, 1, 1, 1},
-                *this),
+    rfi_S012(
+        rfi_S012_name, "S012",
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times,
+                                      num_frequencies, 3, num_polarizations, num_dishes},
+        std::array<std::string, 5>{"Trfi", "F", "S", "P", "D"},
+        std::array<std::ptrdiff_t, 5>{rfi_downsampling_factor, 1, 1, 1, 1}, *this),
+    rfi_S012bar(
+        rfi_S012bar_name, "S012bar",
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times_bar,
+                                      num_frequencies, 3, num_polarizations, num_dishes},
+        std::array<std::string, 5>{"Trfibar", "F", "S", "P", "D"},
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(rfi_downsampling_factor)
+                                          * rfi_second_downsampling_factor,
+                                      1, 1, 1, 1},
+        *this),
     did_set_metadata(false)
 //
 {

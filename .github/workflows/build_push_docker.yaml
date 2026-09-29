@@ -21,9 +21,6 @@ name: Build and optionally push docker images
 
 env:
   REGISTRY: ghcr.io
-  CPU_IMG: "ghcr.io/${{ github.repository }}/kotekan-2404-cpu"
-  GPU_IMG: "ghcr.io/${{ github.repository }}/kotekan-2404"
-  INTEL_IMG: "ghcr.io/${{ github.repository }}/kotekan-2404-intel"
 
 on:
   workflow_call:
@@ -42,12 +39,17 @@ on:
         description: "Full Intel-compiler image name (including tag) built or selected by this workflow"
         value: ${{ jobs.build-push-docker.outputs.docker_intel_img_name }}
 
+permissions:
+  contents: read
+
 jobs:
 
   build-push-docker:
     name: "Build and push CPU and GPU docker images"
     runs-on: ubuntu-latest
-    permissions: write-all
+    permissions:
+      contents: read
+      packages: write
 
     outputs:
       docker_cpu_img_name: ${{ steps.docker_img.outputs.cpu_img_name }}
@@ -60,6 +62,13 @@ jobs:
           # `changed-files` with `since_last_remote_commit` needs the history: on a newly
           # opened PR it falls back to `HEAD^`, which a depth-1 checkout does not have.
           fetch-depth: 0
+
+      - name: Set container image names
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          echo "CPU_IMG=${REGISTRY}/${repository}/kotekan-2404-cpu" >> "$GITHUB_ENV"
+          echo "GPU_IMG=${REGISTRY}/${repository}/kotekan-2404" >> "$GITHUB_ENV"
+          echo "INTEL_IMG=${REGISTRY}/${repository}/kotekan-2404-intel" >> "$GITHUB_ENV"
 
       # Has the Dockerfile ever changed vs base branch? (for tag selection)
       - name: Check Dockerfile diff vs base
