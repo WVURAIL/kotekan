@@ -31,7 +31,6 @@ jobs:
       ccache_key: ${{ matrix.ccache_key }}
       cmake_defs: ${{ matrix.cmake_defs }}
       post_build: ${{ matrix.post_build }}
-      runs_on: '["self-hosted", "Linux", "X64", "kotekan-gpu"]'
       trusted_gpu: true
     strategy:
       fail-fast: true

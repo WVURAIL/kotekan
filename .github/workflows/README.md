@@ -24,5 +24,15 @@ before dispatching; a missing runner leaves the job queued.
 
 These tests require a privileged container and mount `/data`. Keep credentials,
 personal files, and sensitive network services away from the runner. Restrict
-its runner group to the reviewed GPU workflow. Do not run unreviewed pull
+its runner group to this repository and the workflow that directly defines
+the GPU job: `WVURAIL/kotekan/.github/workflows/test_kotekan_build.yaml@refs/heads/develop`.
+For another fork, use its repository and default branch. A public pull request
+can change workflow YAML, so the workflow's own condition is not a substitute
+for this runner-group policy. If that policy cannot be enforced, keep public
+repository access to the GPU runner disabled. Do not run unreviewed pull
 requests on this hardware. The scheduled context logger uses hosted runners.
+
+`Required CI` is the stable branch-protection check for the image, CPU, Intel,
+and lint jobs. It fails if any required job fails, is canceled, or is skipped.
+The separate `viewers` check covers browser and Python tooling. GPU tests are
+manual and are not prerequisites for routine merges.

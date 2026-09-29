@@ -11,9 +11,6 @@ name: Test Kotekan Build
 on:
   workflow_call:
     inputs:
-      runs_on: # Base runner image, ubuntu-latest if not specified
-        required: false
-        type: string
       trusted_gpu:
         description: Allow privileged GPU testing of a manually selected default-branch revision
         required: false
@@ -39,10 +36,10 @@ permissions:
 jobs:
   test:
     if: >-
-      ${{ !contains(inputs.runs_on, 'self-hosted') ||
+      ${{ !inputs.trusted_gpu ||
           (inputs.trusted_gpu && github.event_name == 'workflow_dispatch' &&
            github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
-    runs-on: ${{ startsWith(inputs.runs_on, '[') && fromJSON(inputs.runs_on) || inputs.runs_on || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.trusted_gpu && fromJSON('["self-hosted", "Linux", "X64", "kotekan-gpu"]') || 'ubuntu-latest' }}
     container:
       image: ${{ inputs.container_image }}
       credentials:
