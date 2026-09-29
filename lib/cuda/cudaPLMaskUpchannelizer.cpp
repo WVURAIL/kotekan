@@ -141,7 +141,8 @@ cudaPLMaskUpchannelizer::cudaPLMaskUpchannelizer(kotekan::Config& config,
     // Buffers. The output keeps the same elements; its frequency dimension is the (possibly
     // over-allocated) num_frequencies_out, of which only [0, Fmax-Fmin) is written.
     pl_expanded_mask(expanded_pl_mask_name, "pl_mask_exp",
-                     std::array<std::ptrdiff_t, 5>{buffer_depth * div_noremainder(num_times, 64),
+                     std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth)
+                                                       * div_noremainder(num_times, 64),
                                                    num_frequencies, num_polarizations,
                                                    div_noremainder(num_dishes, 8), 64 / 8},
                      std::array<std::string, 5>{"Thi64", "F", "P", "D8", "Tlo64"},
@@ -149,7 +150,8 @@ cudaPLMaskUpchannelizer::cudaPLMaskUpchannelizer(kotekan::Config& config,
     pl_upchannelized_expanded_mask(
         upchannelized_expanded_pl_mask_name, "pl_mask_exp",
         std::array<std::ptrdiff_t, 5>{
-            buffer_depth * div_noremainder(num_times, 64 * upchannelization_factor),
+            static_cast<std::ptrdiff_t>(buffer_depth)
+                * div_noremainder(num_times, 64 * upchannelization_factor),
             num_frequencies_out, num_polarizations, div_noremainder(num_dishes, 8), 64 / 8},
         std::array<std::string, 5>{"Thi64", "F", "P", "D8", "Tlo64"},
         std::array<std::ptrdiff_t, 5>{64 * upchannelization_factor, 1, 1, 8,

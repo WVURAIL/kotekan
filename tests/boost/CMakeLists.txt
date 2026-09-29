@@ -350,3 +350,30 @@ target_include_directories(test_TransposeBasebandArray PRIVATE ${KOTEKAN_SOURCE_
 add_executable(test_upchannelizeReference test_upchannelizeReference.cpp
                                           ${KOTEKAN_SOURCE_DIR}/lib/cuda/upchannelizeReference.cpp)
 target_include_directories(test_upchannelizeReference PRIVATE ${KOTEKAN_SOURCE_DIR}/lib/cuda)
+
+# HFB integration sample counts can exceed 32 bits without requiring large data buffers.
+add_executable(test_HFBAccumulate test_HFBAccumulate.cpp)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    target_link_libraries(
+        test_HFBAccumulate
+        PRIVATE libexternal
+                kotekan_stages
+                kotekan_libs
+                kotekan_utils
+                kotekan_core
+                -Wl,-all_load
+                kotekan_metadata)
+else()
+    target_link_libraries(
+        test_HFBAccumulate
+        PRIVATE libexternal
+                kotekan_stages
+                kotekan_libs
+                kotekan_utils
+                kotekan_core
+                -Wl,--whole-archive
+                kotekan_metadata
+                -Wl,--no-whole-archive)
+endif()
+target_include_directories(test_HFBAccumulate PRIVATE ${KOTEKAN_SOURCE_DIR}/lib/stages
+                                                      ${KOTEKAN_SOURCE_DIR}/lib/utils)

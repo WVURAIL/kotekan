@@ -83,7 +83,8 @@ void pulsarPostProcess::fill_headers(unsigned char* out_buf, PSRHeader* psr_head
     DEBUG("Filling headers starting at {} ({}.{:09d})", fpga_seq_num, time_now->tv_sec,
           time_now->tv_nsec);
     for (uint i = 0; i < _num_packet_per_stream; ++i) { // 16 or 80 frames in a stream
-        uint64_t fpga_now = (fpga_seq_num + _timesamples_per_pulsar_packet * i);
+        uint64_t fpga_now =
+            (fpga_seq_num + static_cast<uint64_t>(_timesamples_per_pulsar_packet) * i);
         psr_header->seconds = time_now->tv_sec - unix_offset;
         psr_header->data_frame =
             (time_now->tv_nsec / 1.e9) / (_timesamples_per_pulsar_packet * fpga_s);
@@ -287,7 +288,8 @@ void pulsarPostProcess::main_thread() {
                         if (out_frame == nullptr)
                             goto end_loop;
                         // Fill the headers of the new buffer
-                        fpga_seq_num += _timesamples_per_pulsar_packet * _num_packet_per_stream;
+                        fpga_seq_num += static_cast<uint64_t>(_timesamples_per_pulsar_packet)
+                                        * _num_packet_per_stream;
                         fill_headers((unsigned char*)out_frame, &psr_header, fpga_seq_num,
                                      &time_now, beam_coord, thread_ids);
                     } // end if last frame

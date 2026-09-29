@@ -1,3 +1,14 @@
+from argparse import ArgumentParser
+
+parser = ArgumentParser(description="Display a kotekan TCP power stream.")
+parser.add_argument(
+    "--host",
+    default="127.0.0.1",
+    help="TCP interface (default 127.0.0.1); set a specific address for remote producers",
+)
+parser.add_argument("--port", type=int, default=2061, help="TCP port (default 2061)")
+args = parser.parse_args()
+
 import time
 import threading
 import socket
@@ -32,8 +43,8 @@ target = "B1133+16"
 header_fmt = "=iiiidiiiId"
 stokes_lookup = ["YX", "XY", "YY", "XX", "LR", "RL", "LL", "RR", "I", "Q", "U", "V"]
 
-TCP_IP = "0.0.0.0"
-TCP_PORT = 2061
+TCP_IP = args.host
+TCP_PORT = args.port
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.bind((TCP_IP, TCP_PORT))
 sock.listen(1)

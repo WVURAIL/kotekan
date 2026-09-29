@@ -19,6 +19,7 @@
 #include "gsl-lite.hpp" // for span
 #include "json.hpp"     // for basic_json, iter_impl, json
 
+#include <limits>    // for numeric_limits
 #include <map>       // for map
 #include <memory>    // for shared_ptr, __shared_ptr_access, weak_ptr
 #include <random>    // for mt19937
@@ -410,6 +411,10 @@ ChangeStatePattern::ChangeStatePattern(kotekan::Config& config, const std::strin
     }
 
     num_elements = config.get<size_t>(path, "num_elements");
+    if (num_elements > size_t{std::numeric_limits<uint16_t>::max()} + 1) {
+        throw std::invalid_argument(
+            "ChangeStatePattern: num_elements exceeds the 16-bit input index range");
+    }
 }
 
 void ChangeStatePattern::fill(VisFrameView& frame) {
@@ -444,8 +449,9 @@ state_id_t ChangeStatePattern::gen_state_inputs() {
 
     std::vector<input_ctype> inputs;
 
-    for (uint16_t i = 0; i < num_elements; i++) {
-        inputs.emplace_back(i, fmt::format("input_{}_{}", _input_update_ind++, i));
+    for (size_t i = 0; i < num_elements; i++) {
+        inputs.emplace_back(static_cast<uint16_t>(i),
+                            fmt::format("input_{}_{}", _input_update_ind++, i));
     }
 
     auto& dm = datasetManager::instance();

@@ -101,7 +101,7 @@ void testDataGenFloat::main_thread() {
     int frame_id = 0;
     int frame_id_abs = 0;
     void* frame = nullptr;
-    uint64_t seq_num = _samples_per_data_set * _first_frame_index;
+    uint64_t seq_num = static_cast<uint64_t>(_samples_per_data_set) * _first_frame_index;
     bool finished_seeding_consant = false;
     struct timeval now;
     // Random-number state for `type == "random"`; per stage, so that two instances do not share it
@@ -182,7 +182,7 @@ void testDataGenFloat::main_thread() {
                     break;
                 fvalue = value;
             } else if (type == "ramp") {
-                fvalue = fmod(j * value, 256 * value);
+                fvalue = fmod(static_cast<double>(j) * value, 256.0 * value);
             } else if (type == "random") {
                 // Generate a random float between _rand_min and _rand_max
                 fvalue = dis(eng);

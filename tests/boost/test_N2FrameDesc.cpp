@@ -4,6 +4,7 @@
 #include "N2Layout.hpp"
 #include "N2Metadata.hpp"
 #include "N2Util.hpp"
+#include "visUtil.hpp"
 
 #include <boost/test/included/unit_test.hpp>
 #include <csignal>
@@ -521,4 +522,27 @@ BOOST_AUTO_TEST_CASE(test_metadata_dataset_identity_roundtrip) {
     encoded.erase("dataset_id");
     from_json(encoded, json_copy);
     BOOST_CHECK(json_copy.dataset_id == dset_id_t::null);
+}
+
+BOOST_AUTO_TEST_CASE(test_full_input_index_range) {
+    const uint32_t num_elements = 65536;
+    const auto products =
+        N2FrameDesc::generate_product_list(num_elements, N2Layout::Autocorrelations);
+    BOOST_REQUIRE_EQUAL(products.size(), num_elements);
+    BOOST_CHECK_EQUAL(products.front().input_a, 0);
+    BOOST_CHECK_EQUAL(products.back().input_a, 65535);
+    BOOST_CHECK_EQUAL(products.back().input_b, 65535);
+
+    BOOST_CHECK_EQUAL(::cmap(0, 65535, num_elements), 65535);
+    BOOST_CHECK_EQUAL(::cmap(65535, 65535, num_elements), 2147516415U);
+    BOOST_CHECK_EQUAL(N2::cmap(65535, 65535, num_elements), 2147516415U);
+}
+
+BOOST_AUTO_TEST_CASE(test_reject_input_index_overflow) {
+    BOOST_CHECK_THROW(N2FrameDesc::generate_product_list(65537, N2Layout::Autocorrelations),
+                      std::runtime_error);
+    BOOST_CHECK_THROW(N2FrameDesc::generate_product_list(65537, N2Layout::FullUpperTri),
+                      std::runtime_error);
+    BOOST_CHECK_THROW(N2FrameDesc::generate_product_list(65537, N2Layout::InputANDMasked, {0}),
+                      std::runtime_error);
 }

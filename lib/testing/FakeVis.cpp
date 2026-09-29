@@ -20,7 +20,9 @@
 #include <complex>    // for complex
 #include <functional> // for bind, function, placeholders
 #include <iterator>   // for back_insert_iterator, back_inserter, begin, end
+#include <limits>     // for numeric_limits
 #include <memory>     // for allocator, unique_ptr
+#include <stdexcept>  // for invalid_argument
 #include <time.h>     // for timespec, nanosleep
 #include <tuple>      // for get, make_tuple, tuple
 #include <utility>    // for pair
@@ -43,6 +45,9 @@ FakeVis::FakeVis(Config& config, const std::string& unique_name,
 
     // Fetch any simple configuration
     num_elements = config.get<size_t>(unique_name, "num_elements");
+    if (num_elements > size_t{std::numeric_limits<uint16_t>::max()} + 1) {
+        throw std::invalid_argument("FakeVis: num_elements exceeds the 16-bit input index range");
+    }
     block_size = config.get<size_t>(unique_name, "block_size");
     num_eigenvectors = config.get<size_t>(unique_name, "num_ev");
     sleep_before = config.get_default<float>(unique_name, "sleep_before", 0.0);
@@ -116,9 +121,9 @@ void FakeVis::main_thread() {
         states.push_back(dm.create_state<inputState>(ispec).first);
 
         std::vector<prod_ctype> pspec;
-        for (uint16_t i = 0; i < num_elements; i++)
-            for (uint16_t j = i; j < num_elements; j++)
-                pspec.push_back({i, j});
+        for (size_t i = 0; i < num_elements; i++)
+            for (size_t j = i; j < num_elements; j++)
+                pspec.push_back({static_cast<uint16_t>(i), static_cast<uint16_t>(j)});
         states.push_back(dm.create_state<prodState>(pspec).first);
         states.push_back(dm.create_state<eigenvalueState>(num_eigenvectors).first);
 
@@ -203,7 +208,7 @@ void FakeVis::main_thread() {
         // If requested sleep for the extra time required to produce a fake vis
         // at the correct cadence
         if (this->wait) {
-            double diff = cadence * frame_count - (current_time() - start);
+            double diff = static_cast<double>(cadence) * frame_count - (current_time() - start);
             timespec ts_diff = double_to_ts(diff);
             nanosleep(&ts_diff, nullptr);
         }

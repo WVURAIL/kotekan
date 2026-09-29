@@ -152,8 +152,9 @@ void frbNetworkProcess::main_thread() {
 
     // 384 is integration factor and 2560 fpga sampling time in ns
     const uint32_t fpga_ns = Telescope::instance().seq_length_nsec();
-    const unsigned samples_per_frame =
-        samples_per_packet * packets_per_stream * 384; // number of FPGA samples in each frame
+    const uint64_t samples_per_frame = static_cast<uint64_t>(samples_per_packet)
+                                       * packets_per_stream
+                                       * 384; // number of FPGA samples in each frame
     unsigned long time_interval = samples_per_frame * fpga_ns; // time per buffer frame in ns
 
     long count = 0;

@@ -19,8 +19,10 @@
 #include <algorithm>  // for fill, copy, transform
 #include <functional> // for bind, function
 #include <iterator>   // for back_insert_iterator, begin, end, back_inserter
+#include <limits>     // for numeric_limits
 #include <memory>     // for shared_ptr
 #include <numeric>    // for iota
+#include <stdexcept>  // for invalid_argument
 #include <tuple>      // for get, tie, tuple
 
 
@@ -88,11 +90,15 @@ visTransform::visTransform(Config& config, const std::string& unique_name,
 
     size_t num_elements = _inputs.size();
 
+    if (num_elements > static_cast<size_t>(std::numeric_limits<uint16_t>::max()) + 1) {
+        throw std::invalid_argument("Number of inputs exceeds the product index range.");
+    }
+
     // Create the product specification
     _prods.reserve(num_elements * (num_elements + 1) / 2);
-    for (uint16_t i = 0; i < num_elements; i++) {
-        for (uint16_t j = i; j < num_elements; j++) {
-            _prods.push_back({i, j});
+    for (size_t i = 0; i < num_elements; i++) {
+        for (size_t j = i; j < num_elements; j++) {
+            _prods.push_back({static_cast<uint16_t>(i), static_cast<uint16_t>(j)});
         }
     }
 

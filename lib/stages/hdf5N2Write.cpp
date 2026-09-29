@@ -796,9 +796,9 @@ N2FileData::AddFrameStatus N2FileData::add_frame(const N2FrameView& fv, size_t t
                                 N2Layout_to_string(fv.n2_layout)));
     if (fv.eval.size() != fv.num_ev)
         add_failure(fmt::format("eval.size() != num_ev: {} != {}", fv.eval.size(), fv.num_ev));
-    if (fv.evec.size() != fv.num_ev * fv.num_elements)
+    if (fv.evec.size() != static_cast<size_t>(fv.num_ev) * fv.num_elements)
         add_failure(fmt::format("evec.size() != num_ev * num_elements: {} != {}", fv.evec.size(),
-                                fv.num_ev * fv.num_elements));
+                                static_cast<size_t>(fv.num_ev) * fv.num_elements));
     if (fv.gain.size() != fv.num_elements)
         add_failure(
             fmt::format("gain.size() != num_elements: {} != {}", fv.gain.size(), fv.num_elements));

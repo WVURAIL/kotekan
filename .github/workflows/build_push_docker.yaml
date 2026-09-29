@@ -42,12 +42,17 @@ on:
         description: "Full Intel-compiler image name (including tag) built or selected by this workflow"
         value: ${{ jobs.build-push-docker.outputs.docker_intel_img_name }}
 
+permissions:
+  contents: read
+
 jobs:
 
   build-push-docker:
     name: "Build and push CPU and GPU docker images"
     runs-on: ubuntu-latest
-    permissions: write-all
+    permissions:
+      contents: read
+      packages: write
 
     outputs:
       docker_cpu_img_name: ${{ steps.docker_img.outputs.cpu_img_name }}

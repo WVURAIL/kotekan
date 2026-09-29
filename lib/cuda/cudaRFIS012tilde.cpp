@@ -118,15 +118,18 @@ cudaRFIS012tilde::cudaRFIS012tilde(kotekan::Config& config, const std::string& u
             std::array<std::ptrdiff_t, 3>{buffer_depth * 1, num_polarizations, num_dishes},
             std::array<std::string, 3>{"Tbf", "P", "D"},
             std::array<std::ptrdiff_t, 3>{bf_mask_lifetime_in_samples, 1, 1}, *this),
-    rfi_S012(rfi_S012_name, "S012",
-             std::array<std::ptrdiff_t, 5>{buffer_depth * rfi_num_times, num_frequencies, 3,
-                                           num_polarizations, num_dishes},
-             std::array<std::string, 5>{"Trfi", "F", "S", "P", "D"},
-             std::array<std::ptrdiff_t, 5>{rfi_downsampling_factor, 1, 1, 1, 1}, *this),
-    rfi_S012tilde(rfi_S012tilde_name, "S012tilde",
-                  std::array<std::ptrdiff_t, 3>{buffer_depth * rfi_num_times, num_frequencies, 3},
-                  std::array<std::string, 3>{"Trfi", "F", "S"},
-                  std::array<std::ptrdiff_t, 3>{rfi_downsampling_factor, 1, 1}, *this),
+    rfi_S012(
+        rfi_S012_name, "S012",
+        std::array<std::ptrdiff_t, 5>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times,
+                                      num_frequencies, 3, num_polarizations, num_dishes},
+        std::array<std::string, 5>{"Trfi", "F", "S", "P", "D"},
+        std::array<std::ptrdiff_t, 5>{rfi_downsampling_factor, 1, 1, 1, 1}, *this),
+    rfi_S012tilde(
+        rfi_S012tilde_name, "S012tilde",
+        std::array<std::ptrdiff_t, 3>{static_cast<std::ptrdiff_t>(buffer_depth) * rfi_num_times,
+                                      num_frequencies, 3},
+        std::array<std::string, 3>{"Trfi", "F", "S"},
+        std::array<std::ptrdiff_t, 3>{rfi_downsampling_factor, 1, 1}, *this),
     did_set_metadata(false)
 //
 {
@@ -285,7 +288,8 @@ cudaEvent_t cudaRFIS012tilde::execute(cudaPipelineState& /*pipestate*/,
     n2k::launch_s012_station_downsample_kernel(
         (ulong*)(rfi_S012tilde_memory + Trfitilde_offset),
         (const ulong*)(rfi_S012_memory + Trfi_offset), (const uint8_t*)bf_mask_memory + Tbf_offset,
-        Trfi, 0, Trfisize, num_frequencies, num_dishes * num_polarizations,
+        Trfi, 0, Trfisize, num_frequencies,
+        static_cast<std::ptrdiff_t>(num_dishes) * num_polarizations,
         device.getStream(cuda_stream_id));
 #ifdef DEBUGGING
     CHECK_CUDA_ERROR(cudaStreamSynchronize(device.getStream(cuda_stream_id)));

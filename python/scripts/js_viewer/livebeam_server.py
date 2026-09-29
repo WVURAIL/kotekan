@@ -141,7 +141,7 @@ class KotekanPowerStream:
 
     def __init__(
         self,
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=23401,
         on_frame=None,
         emit_interval_s=DEFAULT_VIEWER_INTEGRATION_MS / 1000.0,
@@ -681,14 +681,21 @@ def main():
     )
     ap.add_argument(
         "--kotekan-host",
-        default="0.0.0.0",
-        help="TCP interface to bind for kotekan input (default 0.0.0.0)",
+        default="127.0.0.1",
+        help="TCP interface for kotekan input (default 127.0.0.1); "
+        "set a specific address to accept remote producers",
     )
     ap.add_argument(
         "--kotekan-port",
         default=23401,
         type=int,
         help="TCP port for kotekan input (default 23401)",
+    )
+    ap.add_argument(
+        "--listen-host",
+        default="127.0.0.1",
+        help="HTTP and WebSocket interface (default 127.0.0.1); "
+        "set a specific address to allow remote browsers",
     )
     ap.add_argument(
         "--ws-port",
@@ -788,13 +795,13 @@ def main():
     ws_factory = LiveBeamWSFactory(kotekan, viewer_config)
     kotekan.on_frame = ws_factory.broadcast
 
-    reactor.listenTCP(args.ws_port, ws_factory)
+    reactor.listenTCP(args.ws_port, ws_factory, interface=args.listen_host)
 
     # HTTP root: static files + /mode endpoint. NoCacheFile saves us a lot of
     # "I edited the JS but the browser ignored me" trouble during development.
     root = NoCacheFile(static_dir)
     root.putChild(b"mode", ModeResource(kotekan))
-    reactor.listenTCP(args.http_port, server.Site(root))
+    reactor.listenTCP(args.http_port, server.Site(root), interface=args.listen_host)
 
     def _on_shutdown():
         kotekan.close()
@@ -805,7 +812,14 @@ def main():
     if args.launch_browser:
         import webbrowser
 
-        webbrowser.open(f"http://localhost:{args.http_port}/")
+        browser_host = args.listen_host
+        if browser_host == "0.0.0.0":
+            browser_host = "127.0.0.1"
+        elif browser_host == "::":
+            browser_host = "::1"
+        if ":" in browser_host:
+            browser_host = f"[{browser_host}]"
+        webbrowser.open(f"http://{browser_host}:{args.http_port}/")
 
     # Idempotent shutdown. When SpawnProcess wraps this script as a child of
     # kotekan, a single Ctrl-C delivers SIGINT to both kotekan and to us via

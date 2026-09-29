@@ -84,11 +84,13 @@ public:
                == sizeof(float16_t) * upchan_max_num_channels * upchan_factor * num_polarizations
                       * num_dishes_N * num_dishes_M * num_components);
 
+        const ptrdiff_t num_upchan = static_cast<ptrdiff_t>(upchan_num_channels) * upchan_factor;
+        const ptrdiff_t max_upchan =
+            static_cast<ptrdiff_t>(upchan_max_num_channels) * upchan_factor;
+
         // Set metadata
         frb1_phase_buffer->require_frame_desc(kotekan::NDArray<float16_t, 5>::describe(
-            "W",
-            {upchan_max_num_channels * upchan_factor, num_polarizations, num_dishes_N, num_dishes_M,
-             num_components},
+            "W", {max_upchan, num_polarizations, num_dishes_N, num_dishes_M, num_components},
             {"Fbar", "P", "dishN", "dishM", "C"}, {1, 1, 1, 1, 1}));
         frb1_phase_buffer->allocate_new_metadata_object(frame_id);
         const auto& frb1_phase_meta = get_chord_metadata(frb1_phase_buffer->get_metadata(frame_id));
@@ -96,12 +98,12 @@ public:
             frb1_phase_buffer->get_frame_desc<kotekan::GenericNDArray>());
         frb1_phase_meta->set_fpga_seq_num(0);           // ???
         frb1_phase_meta->set_time_downsampling_fpga(1); // ???
-        std::vector<int> coarse_freq(upchan_num_channels * upchan_factor);
-        std::vector<int> freq_upchan_factor(upchan_num_channels * upchan_factor);
-        std::vector<int> freq_upchan_index(upchan_num_channels * upchan_factor);
+        std::vector<int> coarse_freq(num_upchan);
+        std::vector<int> freq_upchan_factor(num_upchan);
+        std::vector<int> freq_upchan_index(num_upchan);
         for (int freq = 0; freq < upchan_num_channels; ++freq) {
             for (int upchan_index = 0; upchan_index < upchan_factor; ++upchan_index) {
-                const int idx = upchan_index + upchan_factor * freq;
+                const ptrdiff_t idx = upchan_index + static_cast<ptrdiff_t>(upchan_factor) * freq;
                 coarse_freq.at(idx) = frequency_channels.at(upchan_min_channel + freq);
                 freq_upchan_factor.at(idx) = upchan_factor;
                 freq_upchan_index.at(idx) = upchan_index;
@@ -116,7 +118,7 @@ public:
         const std::ptrdiff_t str_dish_N = str_dish_M * num_dishes_M;
         const std::ptrdiff_t str_polr = str_dish_N * num_dishes_N;
         const std::ptrdiff_t str_freq = str_polr * num_polarizations;
-        for (int freq = 0; freq < upchan_max_num_channels * upchan_factor; ++freq) {
+        for (ptrdiff_t freq = 0; freq < max_upchan; ++freq) {
             for (int polr = 0; polr < num_polarizations; ++polr) {
                 for (int dish_N = 0; dish_N < num_dishes_N; ++dish_N) {
                     for (int dish_M = 0; dish_M < num_dishes_M; ++dish_M) {
@@ -126,8 +128,7 @@ public:
                                && idx < std::ptrdiff_t(frb1_phase_buffer->frame_size
                                                        / sizeof *frb1_phase_frame));
                         frb1_phase_frame[idx] =
-                            float16_t(freq < upchan_num_channels * upchan_factor ? frb1_input_scale
-                                                                                 : 0.0 / 0.0);
+                            float16_t(freq < num_upchan ? frb1_input_scale : 0.0 / 0.0);
                     }
                 }
             }
@@ -135,7 +136,7 @@ public:
 
         // Ensure that the FRB1 kernel cannot overflow for these weights. (The unused
         // frequencies have NaN weights and are skipped.)
-        for (int freq = 0; freq < upchan_num_channels * upchan_factor; ++freq) {
+        for (ptrdiff_t freq = 0; freq < num_upchan; ++freq) {
             const double bound = kotekan::frb1_intensity_bound(
                 reinterpret_cast<const float16_t*>(&frb1_phase_frame[str_freq * freq]),
                 num_polarizations, num_dishes_M, num_dishes_N);

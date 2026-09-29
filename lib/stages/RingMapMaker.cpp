@@ -133,7 +133,7 @@ void RingMapMaker::main_thread() {
                            frame_var.begin(),
                            [](const float& a) { return (a != 0.) ? 1. / a : 0.; });
             mtx.lock();
-            for (uint p = 0; p < num_pol; p++) {
+            for (size_t p = 0; p < num_pol; p++) {
                 // Pointer to the span of visibilities for this pol
                 cfloat* input_vis;
 
@@ -312,8 +312,8 @@ bool RingMapMaker::setup(size_t frame_id) {
     for (auto f : freqs) {
         std::vector<std::vector<float>> vis(num_pol);
         std::vector<std::vector<float>> w(num_pol);
-        for (uint p = 0; p < num_pol; p++) {
-            vis.at(p).resize(num_time * num_pix);
+        for (size_t p = 0; p < num_pol; p++) {
+            vis.at(p).resize(static_cast<size_t>(num_time) * num_pix);
             w.at(p).resize(num_time);
             std::fill(vis.at(p).begin(), vis.at(p).end(), 0.);
             std::fill(w.at(p).begin(), w.at(p).end(), 0.);
@@ -369,9 +369,9 @@ void RingMapMaker::gen_matrices() {
 
     // Construct matrix of phase weights for every baseline and pixel
     for (auto f : freqs) {
-        std::vector<cfloat> m(num_pix * num_bl);
+        std::vector<cfloat> m(static_cast<size_t>(num_pix) * num_bl);
         float lam = wl(f.second.centre);
-        for (uint p = 0; p < num_pix; p++) {
+        for (size_t p = 0; p < num_pix; p++) {
             for (uint i = 0; i < num_bl; i++) {
                 m[p * num_bl + i] = std::exp(cfloat(-2.i) * pi * ns_baselines[i] / lam * sinza[p])
                                     * apod_coeff[i] / norm;
@@ -411,7 +411,7 @@ int64_t RingMapMaker::resolve_time(time_ctype t) {
         size_t stop = size_t(latest) + 1;
         for (auto f : freqs) {
             uint64_t fid = f.first;
-            for (uint p = 0; p < num_pol; p++) {
+            for (size_t p = 0; p < num_pol; p++) {
                 std::fill(map.at(fid).at(p).begin() + start * num_pix,
                           map.at(fid).at(p).begin() + stop * num_pix, 0.);
                 std::fill(wgt.at(fid).at(p).begin() + start, wgt.at(fid).at(p).begin() + stop, 0.);

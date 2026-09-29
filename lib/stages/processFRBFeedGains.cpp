@@ -103,15 +103,16 @@ void processFRBFeedGains::set_frame_desc(Buffer* buf) {
         {"Fbar", "P", "dishN", "dishM", "C"}, {1, 1, 1, 1, 1}));
 
     // everything below here ends up being the same as the parent class
-    freq_upchan_factor = std::vector<int>(num_local_freq * upchan_factor, upchan_factor);
-    freq_upchan_index = std::vector<int>(num_local_freq * upchan_factor);
-    coarse_freq = std::vector<int>(num_local_freq * upchan_factor, -1);
+    freq_upchan_factor =
+        std::vector<int>(static_cast<size_t>(num_local_freq) * upchan_factor, upchan_factor);
+    freq_upchan_index = std::vector<int>(static_cast<size_t>(num_local_freq) * upchan_factor);
+    coarse_freq = std::vector<int>(static_cast<size_t>(num_local_freq) * upchan_factor, -1);
 
     // set the actual frequency upchan indices. Assume increasing
     // upchannelized index
     // TODO: this needs to be consistent with the upchannelizer, and
     // potentially configurable
-    for (uint64_t f = 0; f < num_local_freq * upchan_factor; ++f) {
+    for (size_t f = 0; f < freq_upchan_index.size(); ++f) {
         freq_upchan_index[f] = static_cast<int>(f % upchan_factor);
     }
 }

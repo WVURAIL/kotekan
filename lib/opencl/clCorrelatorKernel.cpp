@@ -64,18 +64,20 @@ void clCorrelatorKernel::build() {
 
     CHECK_CL_ERROR(clSetKernelArg(kernel, (cl_uint)3, sizeof(id_y_map), (void*)&id_y_map));
 
-    zeros = (cl_int*)calloc(_num_blocks * _num_local_freq, sizeof(cl_int)); // for the output
-                                                                            // buffers
+    zeros = (cl_int*)calloc(static_cast<size_t>(_num_blocks) * _num_local_freq,
+                            sizeof(cl_int)); // for the output
+                                             // buffers
 
-    device_block_lock = clCreateBuffer(device.get_context(), CL_MEM_COPY_HOST_PTR,
-                                       _num_blocks * _num_local_freq * sizeof(cl_int), zeros, &err);
+    device_block_lock = clCreateBuffer(
+        device.get_context(), CL_MEM_COPY_HOST_PTR,
+        static_cast<size_t>(_num_blocks) * _num_local_freq * sizeof(cl_int), zeros, &err);
     CHECK_CL_ERROR(clSetKernelArg(kernel, 4, sizeof(void*), (void*)&device_block_lock));
 
 
     // Correlation kernel global and local work space sizes.
-    gws[0] = 8 * _num_data_sets;
-    gws[1] = 8 * _num_local_freq;
-    gws[2] = _num_blocks * num_accumulations;
+    gws[0] = size_t{8} * _num_data_sets;
+    gws[1] = size_t{8} * _num_local_freq;
+    gws[2] = static_cast<size_t>(_num_blocks) * num_accumulations;
 
     lws[0] = 8;
     lws[1] = 8;
@@ -85,9 +87,10 @@ void clCorrelatorKernel::build() {
 cl_event clCorrelatorKernel::execute(cl_event pre_event) {
     gpuCommand::pre_execute();
 
-    uint32_t input_frame_len = _num_elements * _num_local_freq * _samples_per_data_set;
-    uint32_t output_len = _num_local_freq * _num_blocks * (_block_size * _block_size) * 2
-                          * _num_data_sets * sizeof(int32_t);
+    size_t input_frame_len =
+        static_cast<size_t>(_num_elements) * _num_local_freq * _samples_per_data_set;
+    size_t output_len = static_cast<size_t>(_num_local_freq) * _num_blocks * _block_size
+                        * _block_size * 2 * _num_data_sets * sizeof(int32_t);
 
     cl_mem input_memory =
         device.get_gpu_memory_array("input", gpu_frame_id, _gpu_buffer_depth, input_frame_len);

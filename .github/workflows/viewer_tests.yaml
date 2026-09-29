@@ -1,0 +1,38 @@
+---
+name: Viewer security tests
+
+on:
+    pull_request:
+        branches: [develop]
+    push:
+        branches: [develop]
+
+permissions:
+    contents: read
+
+jobs:
+    viewers:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            - uses: actions/setup-python@v6
+              with:
+                  python-version: '3.12'
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: '24'
+            - name: Install viewer test dependencies
+              run: >-
+                  python -m pip install flask requests matplotlib
+                  -r python/scripts/js_viewer/requirements.txt
+            - name: Test file access and listener defaults
+              env:
+                  MPLBACKEND: Agg
+              run: |
+                  python -m unittest discover -s tools/debug_tool -p 'test_*.py'
+                  python -m unittest discover -s python/scripts/js_viewer -p 'test_*.py'
+                  python -m unittest discover -s tools -p 'test_py_peek_tcp.py'
+            - name: Test browser text rendering
+              run: |
+                  node --check tools/debug_tool/static/pipeline_viewer.js
+                  node tools/debug_tool/test_pipeline_viewer.js

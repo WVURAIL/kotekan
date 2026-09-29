@@ -42,8 +42,8 @@ void integratePowerStream::main_thread() {
     uint8_t* in_frame = nullptr;
     int out_buf_id = 0;
     uint8_t* out_frame = nullptr;
-    uint packet_length = freqs * sizeof(float) + sizeof(IntensityPacketHeader);
-    uint packets_per_buffer = in_buf->frame_size / packet_length;
+    size_t packet_length = freqs * sizeof(float) + sizeof(IntensityPacketHeader);
+    size_t packets_per_buffer = in_buf->frame_size / packet_length;
 
     void* packet_in = malloc(packet_length);
     IntensityPacketHeader* packet_header = (IntensityPacketHeader*)packet_in;
@@ -60,7 +60,7 @@ void integratePowerStream::main_thread() {
         if (in_frame == nullptr)
             break;
 
-        for (uint i = 0; i < packets_per_buffer; i++) {
+        for (size_t i = 0; i < packets_per_buffer; i++) {
             memcpy(packet_in, in_frame + packet_length * i, packet_length);
             int e = packet_header->elem_idx;
 
