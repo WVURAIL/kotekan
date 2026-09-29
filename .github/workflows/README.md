@@ -32,6 +32,14 @@ for this runner-group policy. If that policy cannot be enforced, keep public
 repository access to the GPU runner disabled. Do not run unreviewed pull
 requests on this hardware. The scheduled context logger uses hosted runners.
 
+GitHub documents workflow/ref restrictions for Enterprise plans; the Team plan
+provides repository-level runner-group access. See the
+[runner-group documentation](https://docs.github.com/en/enterprise-cloud@latest/actions/how-tos/manage-runners/self-hosted-runners/manage-access#changing-which-workflows-can-access-a-runner-group).
+No organization runner policy has been verified here. Keep privileged GPU
+access disabled for this public fork unless workflow/ref isolation can be
+enforced. Otherwise, use a separate restricted CI repository or run reviewed
+commits manually on isolated lab hardware.
+
 `Required CI` is the stable branch-protection check for the image, CPU, Intel,
 and lint jobs. It fails if any required job fails, is canceled, or is skipped.
 The separate `viewers` check covers browser and Python tooling. GPU tests are
