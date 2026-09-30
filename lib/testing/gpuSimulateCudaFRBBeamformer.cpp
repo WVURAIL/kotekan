@@ -90,7 +90,8 @@ void gpuSimulateCudaFRBBeamformer::main_thread() {
 
     int phase_frame_id = 0;
 
-    int32_t* S = (int32_t*)malloc(_dish_grid_size * _dish_grid_size * sizeof(int32_t));
+    int32_t* S =
+        (int32_t*)malloc(static_cast<size_t>(_dish_grid_size) * _dish_grid_size * sizeof(int32_t));
     for (size_t i = 0; i < _dishlayout.size() / 2; i++)
         S[i] = _dish_grid_size * _dishlayout[i * 2 + 0] + _dishlayout[i * 2 + 1];
 

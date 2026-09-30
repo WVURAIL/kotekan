@@ -42,16 +42,16 @@ void reorganize_32_to_16_feed_GPU_Correlated_Data_Interleaved(int actual_num_fre
     // function is to reorganize the data so that comparisons can be done more easily
 
     // The input dataset is larger than the output, so can reorganize in the same array
-    int* temp_output = (int*)malloc(actual_num_elements * actual_num_elements
+    int* temp_output = (int*)malloc((size_t)actual_num_elements * actual_num_elements
                                     * actual_num_frequencies * 2 * sizeof(int));
 
-    int input_elements = actual_num_elements * 2;
-    int address = 0;
-    int address_out = 0;
+    size_t input_elements = (size_t)actual_num_elements * 2;
+    size_t address = 0;
+    size_t address_out = 0;
     for (int freq = 0; freq < actual_num_frequencies; freq++) {
         address = (freq >> 1) * input_elements * input_elements * 2;
-        for (int element_y = 0; element_y < input_elements; element_y++) {
-            for (int element_x = 0; element_x < input_elements; element_x++) {
+        for (size_t element_y = 0; element_y < input_elements; element_y++) {
+            for (size_t element_x = 0; element_x < input_elements; element_x++) {
                 if (freq & 1) { // odd frequencies
                     if ((element_x & 1) && (element_y & 1)) {
                         temp_output[address_out++] = correlated_data[address++];
@@ -72,7 +72,8 @@ void reorganize_32_to_16_feed_GPU_Correlated_Data_Interleaved(int actual_num_fre
     }
 
     // copy the results back into correlated_data
-    for (int i = 0; i < actual_num_frequencies * actual_num_elements * actual_num_elements * 2; i++)
+    for (size_t i = 0;
+         i < (size_t)actual_num_frequencies * actual_num_elements * actual_num_elements * 2; i++)
         correlated_data[i] = temp_output[i];
 
     free(temp_output);

@@ -14,7 +14,7 @@ public:
     cl_event execute(cl_event pre_event) override;
 
 private:
-    int32_t output_len;
+    size_t output_len;
     void* output_zeros;
 
     // Common configuration values (which do not change in a run)

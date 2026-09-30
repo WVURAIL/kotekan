@@ -6,6 +6,7 @@
 
 #include "fmt.hpp" // for format, compile_string_to_view, format_string
 
+#include <limits>  // for numeric_limits
 #include <ostream> // for basic_ostream, operator<<
 #include <set>     // for set
 
@@ -181,6 +182,11 @@ std::vector<N2::prod_ctype>
 N2FrameDesc::generate_product_list(uint32_t num_elements, N2Layout layout,
                                    const std::vector<uint16_t>& input_list) {
 
+    if (num_elements > uint32_t{std::numeric_limits<uint16_t>::max()} + 1) {
+        FATAL_ERROR_NON_OO("N2FrameDesc: num_elements ({:d}) exceeds the 16-bit input index range",
+                           num_elements);
+    }
+
     std::vector<N2::prod_ctype> products;
 
     switch (layout) {
@@ -189,9 +195,10 @@ N2FrameDesc::generate_product_list(uint32_t num_elements, N2Layout layout,
             size_t num_prod = (size_t(num_elements) * (num_elements + 1)) / 2;
             products.resize(num_prod);
             size_t p = 0;
-            for (uint16_t i = 0; i < num_elements; i++) {
-                for (uint16_t j = i; j < num_elements; j++) {
-                    products[p] = {.input_a = i, .input_b = j};
+            for (uint32_t i = 0; i < num_elements; i++) {
+                for (uint32_t j = i; j < num_elements; j++) {
+                    products[p] = {.input_a = static_cast<uint16_t>(i),
+                                   .input_b = static_cast<uint16_t>(j)};
                     p++;
                 }
             }
@@ -200,8 +207,9 @@ N2FrameDesc::generate_product_list(uint32_t num_elements, N2Layout layout,
 
         case N2Layout::Autocorrelations: {
             products.resize(num_elements);
-            for (uint16_t i = 0; i < num_elements; i++) {
-                products[i] = {.input_a = i, .input_b = i};
+            for (uint32_t i = 0; i < num_elements; i++) {
+                products[i] = {.input_a = static_cast<uint16_t>(i),
+                               .input_b = static_cast<uint16_t>(i)};
             }
             return products;
         }
@@ -212,10 +220,10 @@ N2FrameDesc::generate_product_list(uint32_t num_elements, N2Layout layout,
             std::set<uint16_t> input_set(input_list.begin(), input_list.end());
 
             // Iterate over all products in the upper triangle
-            for (uint16_t i = 0; i < num_elements; i++) {
-                for (uint16_t j = i; j < num_elements; j++) {
-                    bool i_in = input_set.count(i) > 0;
-                    bool j_in = input_set.count(j) > 0;
+            for (uint32_t i = 0; i < num_elements; i++) {
+                for (uint32_t j = i; j < num_elements; j++) {
+                    bool i_in = input_set.count(static_cast<uint16_t>(i)) > 0;
+                    bool j_in = input_set.count(static_cast<uint16_t>(j)) > 0;
 
                     bool include = false;
                     if (layout == N2Layout::InputORMasked) {
@@ -225,7 +233,8 @@ N2FrameDesc::generate_product_list(uint32_t num_elements, N2Layout layout,
                     }
 
                     if (include) {
-                        products.push_back({.input_a = i, .input_b = j});
+                        products.push_back({.input_a = static_cast<uint16_t>(i),
+                                            .input_b = static_cast<uint16_t>(j)});
                     }
                 }
             }

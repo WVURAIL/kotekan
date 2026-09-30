@@ -191,11 +191,11 @@ void setBBBeams::send_beams(connectionInstance& conn) const {
 
 std::vector<FixedBBBeam> setBBBeams::build_grid_beams() const {
 
-    std::vector<FixedBBBeam> grid_beams(num_x * num_y);
+    std::vector<FixedBBBeam> grid_beams(static_cast<size_t>(num_x) * num_y);
 
     for (uint32_t by = 0; by < num_y; by++) {
         for (uint32_t bx = 0; bx < num_x; bx++) {
-            const uint32_t b = bx + num_x * by;
+            const uint64_t b = bx + static_cast<uint64_t>(num_x) * by;
 
             double x = (x_min * (num_x - bx - 1) + x_max * bx) / (num_x - 1);
             double y = (y_min * (num_y - by - 1) + y_max * by) / (num_y - 1);
@@ -208,11 +208,11 @@ std::vector<FixedBBBeam> setBBBeams::build_grid_beams() const {
 
 std::vector<FixedBBBeam> setBBBeams::build_grid_deg_beams() const {
 
-    std::vector<FixedBBBeam> grid_beams(num_x * num_y);
+    std::vector<FixedBBBeam> grid_beams(static_cast<size_t>(num_x) * num_y);
 
     for (uint32_t by = 0; by < num_y; by++) {
         for (uint32_t bx = 0; bx < num_x; bx++) {
-            const uint32_t b = bx + num_x * by;
+            const uint64_t b = bx + static_cast<uint64_t>(num_x) * by;
 
             double x = (x_min * (num_x - bx - 1) + x_max * bx) / (num_x - 1);
             double y = (y_min * (num_y - by - 1) + y_max * by) / (num_y - 1);

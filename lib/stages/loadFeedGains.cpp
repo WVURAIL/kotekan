@@ -81,9 +81,9 @@ loadFeedGains::loadFeedGains(Config& config, const std::string& unique_name,
                         gain_buffers.at(0)->frame_size);
         }
 
-        if (buf->frame_size != num_local_freq * num_elements * 2 * sizeof(float)) {
+        if (buf->frame_size != sizeof(float) * num_local_freq * num_elements * 2) {
             FATAL_ERROR("Input buffer does not have the expected size. Expected {:d}, got {:d}",
-                        num_local_freq * num_elements * 2 * sizeof(float), buf->frame_size);
+                        sizeof(float) * num_local_freq * num_elements * 2, buf->frame_size);
         }
         // Attach the frame description, or check the declared one
         buf->ensure_frame_desc(kotekan::NDArray<kotekan::GetType_t<kotekan::float32>, 3>::describe(
@@ -140,7 +140,7 @@ bool loadFeedGains::update_gains(Buffer* buf, N2::frameID frame_id,
     double start_time = current_time();
     FILE* ptr_myfile;
 
-    size_t fstride = num_elements * 2;
+    size_t fstride = static_cast<size_t>(num_elements) * 2;
 
     bool any_failed = false;
 
@@ -186,10 +186,10 @@ bool loadFeedGains::update_gains(Buffer* buf, N2::frameID frame_id,
             any_failed = true;
             ffailed = true;
         } else {
-            auto bytes_read = fread(frame + foffset, sizeof(float), 2 * num_elements, ptr_myfile);
+            auto bytes_read = fread(frame + foffset, sizeof(float), fstride, ptr_myfile);
             fclose(ptr_myfile);
 
-            if (bytes_read != 2 * num_elements) {
+            if (bytes_read != fstride) {
                 WARN("[{:s}] Gain file ({:s}) wasn't long enough! Using default gains",
                      beamformer_type, filename);
                 any_failed = true;
@@ -201,7 +201,7 @@ bool loadFeedGains::update_gains(Buffer* buf, N2::frameID frame_id,
         // return true
         if (ffailed) {
             float* dst = frame + foffset;
-            for (uint j = 0; j < 2 * num_elements; j += 2) {
+            for (size_t j = 0; j < fstride; j += 2) {
                 dst[j] = default_gains[0];
                 dst[j + 1] = default_gains[1];
             }

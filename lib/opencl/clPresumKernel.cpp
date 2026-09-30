@@ -51,8 +51,9 @@ void clPresumKernel::build() {
 cl_event clPresumKernel::execute(cl_event pre_event) {
     pre_execute();
 
-    uint32_t presum_len = _num_elements * _num_local_freq * 2 * sizeof(int32_t);
-    uint32_t input_frame_len = _num_elements * _num_local_freq * _samples_per_data_set;
+    size_t presum_len = static_cast<size_t>(_num_elements) * _num_local_freq * 2 * sizeof(int32_t);
+    size_t input_frame_len =
+        static_cast<size_t>(_num_elements) * _num_local_freq * _samples_per_data_set;
 
     cl_mem input_memory =
         device.get_gpu_memory_array("input", gpu_frame_id, _gpu_buffer_depth, input_frame_len);

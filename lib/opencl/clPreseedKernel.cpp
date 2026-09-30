@@ -68,9 +68,9 @@ void clPreseedKernel::build() {
 cl_event clPreseedKernel::execute(cl_event pre_event) {
     pre_execute();
 
-    uint32_t presum_len = _num_elements * _num_local_freq * 2 * sizeof(int32_t);
-    uint32_t output_len = _num_local_freq * _num_blocks * (_block_size * _block_size) * 2
-                          * _num_data_sets * sizeof(int32_t);
+    size_t presum_len = static_cast<size_t>(_num_elements) * _num_local_freq * 2 * sizeof(int32_t);
+    size_t output_len = static_cast<size_t>(_num_local_freq) * _num_blocks * _block_size
+                        * _block_size * 2 * _num_data_sets * sizeof(int32_t);
 
     cl_mem output_memory_frame =
         device.get_gpu_memory_array("output", gpu_frame_id, _gpu_buffer_depth, output_len);

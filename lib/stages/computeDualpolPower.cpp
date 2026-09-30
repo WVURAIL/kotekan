@@ -15,6 +15,7 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h> // for __m256i, _mm256_loadu_si256, _mm256_add_epi32, _mm256_sto...
 #endif
+#include <cstddef>    // for ptrdiff_t, size_t
 #include <functional> // for bind, function
 #include <pthread.h>  // for pthread_setaffinity_np
 #include <sched.h>    // for cpu_set_t, CPU_SET, CPU_ZERO
@@ -109,7 +110,8 @@ void computeDualpolPower::main_thread() {
 
 void computeDualpolPower::parallelSqSumVdif(int loop_idx, int loop_length) {
     uint temp_buffer[num_freq * num_elem];
-    for (int i = loop_idx * loop_length; i < (loop_idx + 1) * loop_length; i++)
+    for (ptrdiff_t i = static_cast<ptrdiff_t>(loop_idx) * loop_length;
+         i < (static_cast<ptrdiff_t>(loop_idx) + 1) * loop_length; i++)
         fastSqSumVdif(in_local + (i * integration_length * PACKET_LEN * num_elem), temp_buffer,
                       (uint*)(out_local + i * (1 + num_freq) * num_elem * sizeof(uint)));
 }

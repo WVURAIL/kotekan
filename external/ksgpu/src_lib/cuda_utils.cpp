@@ -109,7 +109,7 @@ void assign_kernel_dims(dim3 &nblocks, dim3 &nthreads, long nx, long ny, long nz
 
     if (noisy) {
         long n = nx * ny * nz;
-        long npad = threads_per_block * nblocks.x * nblocks.y * nblocks.z;
+        long npad = long(threads_per_block) * nblocks.x * nblocks.y * nblocks.z;
         double overhead = double(npad-n) / double(n);
         
         cout << "assign_kernel_dims: (nx,ny,nz,T)=(" << nx << "," << ny << "," << nz << "," << threads_per_block

@@ -11,6 +11,7 @@
 #include "fmt.hpp" // for compile_string_to_view
 
 #include <arpa/inet.h>  // for htons, inet_addr, inet_aton
+#include <cstddef>      // for ptrdiff_t, size_t
 #include <functional>   // for bind, function
 #include <memory>       // for shared_ptr
 #include <netinet/in.h> // for sockaddr_in, IPPROTO_TCP, IPPROTO_UDP, in_addr
@@ -55,7 +56,8 @@ networkPowerStream::networkPowerStream(Config& config, const std::string& unique
     // the producer (simpleAutocorr / SimpleCrosscorr), this becomes a
     // cross-check via FrameDesc::operator==; otherwise it just records
     // the expected layout for any later consumer/producer.
-    in_buf->ensure_frame_desc(kotekan_airspy::make_power_corr_desc(elems * times, freqs));
+    in_buf->ensure_frame_desc(
+        kotekan_airspy::make_power_corr_desc(static_cast<ptrdiff_t>(elems) * times, freqs));
 
     freq0 = config.get_default<float>(unique_name, "freq", 600.) * 1e6;
     sample_bw = config.get_default<float>(unique_name, "sample_bw", 200.) * 1e6;
@@ -98,6 +100,7 @@ void networkPowerStream::main_thread() {
     void* packet_buffer = malloc(packet_length);
     IntensityPacketHeader* packet_header = (IntensityPacketHeader*)packet_buffer;
     float* local_data = (float*)((char*)packet_buffer + sizeof(IntensityPacketHeader));
+    const size_t words_per_element = static_cast<size_t>(freqs) + 1;
     struct timeval tv;
 
     if (dest_protocol == "UDP") {
@@ -128,10 +131,9 @@ void networkPowerStream::main_thread() {
                 packet_header->frame_idx = frame_idx++;
                 for (int p = 0; p < elems; p++) {
                     packet_header->elem_idx = p;
-                    packet_header->samples_summed =
-                        ((uint*)frame)[t * elems * (freqs + 1) + p * (freqs + 1) + freqs];
-                    memcpy(local_data, frame + (t * elems + p) * (freqs + 1) * sizeof(uint),
-                           freqs * sizeof(uint));
+                    const size_t offset = (static_cast<size_t>(t) * elems + p) * words_per_element;
+                    packet_header->samples_summed = ((uint*)frame)[offset + freqs];
+                    memcpy(local_data, frame + offset * sizeof(uint), freqs * sizeof(uint));
                     // Send data to remote server.
                     uint32_t bytes_sent =
                         sendto(socket_fd, packet_buffer, packet_length, MSG_NOSIGNAL,
@@ -161,10 +163,10 @@ void networkPowerStream::main_thread() {
                     packet_header->frame_idx = frame_idx++;
                     for (int p = 0; p < elems; p++) {
                         packet_header->elem_idx = p;
-                        packet_header->samples_summed =
-                            ((uint*)frame)[t * elems * (freqs + 1) + p * (freqs + 1) + freqs];
-                        memcpy(local_data, frame + (t * elems + p) * (freqs + 1) * sizeof(uint),
-                               freqs * sizeof(uint));
+                        const size_t offset =
+                            (static_cast<size_t>(t) * elems + p) * words_per_element;
+                        packet_header->samples_summed = ((uint*)frame)[offset + freqs];
+                        memcpy(local_data, frame + offset * sizeof(uint), freqs * sizeof(uint));
                         uint32_t bytes_sent = send(socket_fd, packet_buffer, packet_length, 0);
                         if (bytes_sent != packet_length) {
                             ERROR("Lost TCP connection!");

@@ -73,8 +73,9 @@ public:
             // Set metadata
             buffer->require_frame_desc(
                 kotekan::NDArray<kotekan::int4x2_swapped_withoffset_t, 3>::describe(
-                    "E", {1, num_times, num_polarizations * num_dishes}, {"F", "T", "E"},
-                    {1, 1, 1}));
+                    "E",
+                    {1, num_times, static_cast<std::ptrdiff_t>(num_polarizations) * num_dishes},
+                    {"F", "T", "E"}, {1, 1, 1}));
         }
     }
 
@@ -144,7 +145,7 @@ public:
 
                 buffer->allocate_new_metadata_object(frame_id);
                 const auto& meta = get_chord_metadata(buffer->get_metadata(frame_id));
-                meta->set_fpga_seq_num(frame_index * num_times);
+                meta->set_fpga_seq_num(static_cast<uint64_t>(frame_index) * num_times);
                 meta->set_from_frame_desc(buffer->get_frame_desc<kotekan::GenericNDArray>());
                 meta->set_time_downsampling_fpga(1);
 

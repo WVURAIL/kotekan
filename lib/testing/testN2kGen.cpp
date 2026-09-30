@@ -263,8 +263,8 @@ void testN2kGen::main_thread() {
     std::vector<int32_t> count_store;
 
     if (repeat_count > 0) {
-        corr_store.resize(corr_num_entries * num_frames);
-        count_store.resize(count_num_entries * num_frames);
+        corr_store.resize(static_cast<size_t>(corr_num_entries) * num_frames);
+        count_store.resize(static_cast<size_t>(count_num_entries) * num_frames);
     }
 #ifdef WITH_OMP
     [[maybe_unused]] double last_time = omp_get_wtime();
@@ -441,9 +441,13 @@ void testN2kGen::main_thread() {
             // If we're repeating, copy the frames into storage before moving on.
             if (repeat_count > 0) {
                 std::copy(corr, corr + corr_num_entries,
-                          corr_store.begin() + num_frames_generated * corr_num_entries);
+                          corr_store.begin()
+                              + static_cast<std::ptrdiff_t>(num_frames_generated)
+                                    * corr_num_entries);
                 std::copy(count, count + count_num_entries,
-                          count_store.begin() + num_frames_generated * count_num_entries);
+                          count_store.begin()
+                              + static_cast<std::ptrdiff_t>(num_frames_generated)
+                                    * count_num_entries);
             }
 
             DEBUG("Generated a {:s} test correlation data set in {:s}[{:d}] at seq {:d}", corr_type,

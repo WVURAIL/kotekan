@@ -148,7 +148,8 @@ void pulsarNetworkProcess::main_thread() {
     t0.tv_nsec = 0; /*  nanoseconds */
 
     const uint32_t fpga_ns = Telescope::instance().seq_length_nsec();
-    unsigned long time_interval = num_packet_per_stream * timesamples_per_pulsar_packet
+    unsigned long time_interval = static_cast<unsigned long>(num_packet_per_stream)
+                                  * timesamples_per_pulsar_packet
                                   * fpga_ns; // time per buffer frame in ns
 
     int my_sequence_id =

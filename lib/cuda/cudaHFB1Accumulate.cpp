@@ -111,7 +111,8 @@ cudaHFB1Accumulate::cudaHFB1Accumulate(kotekan::Config& config, const std::strin
     // collapses them to a single averaged sample, so its Ttilde scaling grows by
     // `hfb_second_downsampling_factor`.
     hfb1_beams(hfb1_beams_name, "I",
-               std::array<std::ptrdiff_t, 4>{buffer_depth * hfb_second_downsampling_factor
+               std::array<std::ptrdiff_t, 4>{static_cast<std::ptrdiff_t>(buffer_depth)
+                                                 * hfb_second_downsampling_factor
                                                  * num_output_times,
                                              num_frequencies, frb1_num_beams_Q, frb1_num_beams_P},
                std::array<std::string, 4>{"Ttilde", "Fbar", "beamQ", "beamP"},
@@ -121,7 +122,9 @@ cudaHFB1Accumulate::cudaHFB1Accumulate(kotekan::Config& config, const std::strin
         std::array<std::ptrdiff_t, 4>{buffer_depth * num_output_times, num_frequencies,
                                       frb1_num_beams_Q, frb1_num_beams_P},
         std::array<std::string, 4>{"Ttilde", "Fbar", "beamQ", "beamP"},
-        {hfb_downsampling_factor * hfb_second_downsampling_factor, 1, 1, 1}, *this),
+        {static_cast<std::ptrdiff_t>(hfb_downsampling_factor) * hfb_second_downsampling_factor, 1,
+         1, 1},
+        *this),
     did_set_metadata(false)
 //
 {

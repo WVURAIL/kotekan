@@ -1,8 +1,10 @@
 #define BOOST_TEST_MODULE "test_chime_stacking"
 
+#include "Config.hpp"
 #include "Stack.hpp"        // for stack_chime_in_cyl, chimeFeed, CYL_A, CYL_D
 #include "datasetState.hpp" // for invert_stack
-#include "visUtil.hpp"      // for input_ctype, prod_ctype, rstack_ctype, stac...
+#include "prodSubset.hpp"
+#include "visUtil.hpp" // for input_ctype, prod_ctype, rstack_ctype, stac...
 
 #include <algorithm>                         // for copy, max, transform
 #include <boost/test/included/unit_test.hpp> // for BOOST_PP_IIF_1, BOOST_PP_IIF_0, BOOST_PP_BO...
@@ -133,4 +135,33 @@ BOOST_AUTO_TEST_CASE(chimeStacking) {
 
     BOOST_CHECK_EQUAL_COLLECTIONS(stack_ind1.begin(), stack_ind1.end(), stack_ind2.begin(),
                                   stack_ind2.end());
+}
+
+
+BOOST_AUTO_TEST_CASE(product_subset_handles_largest_input_index) {
+    kotekan::Config config;
+    config.update_config({{"subset", {{"num_elements", 65536}, {"prod_subset_type", "autos"}}}});
+
+    const auto [indices, products] = parse_prod_subset(config, "/subset");
+    BOOST_REQUIRE_EQUAL(products.size(), 65536);
+    BOOST_REQUIRE_EQUAL(indices.size(), products.size());
+    BOOST_CHECK_EQUAL(products.front().input_a, 0);
+    BOOST_CHECK_EQUAL(products.back().input_a, 65535);
+    BOOST_CHECK_EQUAL(products.back().input_b, 65535);
+    BOOST_CHECK_EQUAL(indices.front(), 0);
+    BOOST_CHECK_EQUAL(indices.back(), 2147516415U);
+}
+
+BOOST_AUTO_TEST_CASE(product_subset_rejects_unrepresentable_inputs) {
+    kotekan::Config config;
+    config.update_config({{"subset", {{"num_elements", 65537}, {"prod_subset_type", "autos"}}}});
+    BOOST_CHECK_THROW(parse_prod_subset(config, "/subset"), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(product_subset_accepts_empty_inputs) {
+    kotekan::Config config;
+    config.update_config({{"subset", {{"num_elements", 0}, {"prod_subset_type", "autos"}}}});
+    const auto [indices, products] = parse_prod_subset(config, "/subset");
+    BOOST_CHECK(indices.empty());
+    BOOST_CHECK(products.empty());
 }

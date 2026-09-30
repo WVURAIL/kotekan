@@ -1,4 +1,4 @@
-function isIE() { return ((navigator.appName == 'Microsoft Internet Explorer') || ((navigator.appName == 'Netscape') && (new RegExp("Trident/.*rv:([0-9]{1,}[\.0-9]{0,})").exec(navigator.userAgent) != null))); }
+function isIE() { return ((navigator.appName == 'Microsoft Internet Explorer') || ((navigator.appName == 'Netscape') && (new RegExp("Trident/.*rv:([0-9]{1,}[.0-9]{0,})").exec(navigator.userAgent) != null))); }
 
 // Time between updating kotekan metrics
 const POLL_WAIT_TIME_MS = 1000;
@@ -38,13 +38,13 @@ function update_table(stage, tracker, stats, isDynamic) {
         // If the tracker info exists, only update it.
         if (el) {
             if (!isDynamic) {
-                document.getElementById(stage + "/" + tracker + "_time").innerHTML = time;
+                document.getElementById(stage + "/" + tracker + "_time").textContent = time;
             }
-            document.getElementById(stage + "/" + tracker + "_cur").innerHTML = stats[0];
-            document.getElementById(stage + "/" + tracker + "_min").innerHTML = stats[1];
-            document.getElementById(stage + "/" + tracker + "_max").innerHTML = stats[2];
-            document.getElementById(stage + "/" + tracker + "_avg").innerHTML = stats[3];
-            document.getElementById(stage + "/" + tracker + "_std").innerHTML = stats[4];
+            document.getElementById(stage + "/" + tracker + "_cur").textContent = stats[0];
+            document.getElementById(stage + "/" + tracker + "_min").textContent = stats[1];
+            document.getElementById(stage + "/" + tracker + "_max").textContent = stats[2];
+            document.getElementById(stage + "/" + tracker + "_avg").textContent = stats[3];
+            document.getElementById(stage + "/" + tracker + "_std").textContent = stats[4];
         } else {
             var stage_div = d3.select(document.getElementById(stage + "_div"));
             var stage_tbl = document.getElementById(stage + "_table");
@@ -86,8 +86,8 @@ function update_table(stage, tracker, stats, isDynamic) {
 
 function update_cpu_label(cpu_usage, stage) {
     var total = cpu_usage[0] + cpu_usage[1];
-    document.getElementById(stage + "_cpu").innerHTML = "CPU: " + total + "%";
-    document.getElementById(stage + "_cpu_detail").innerHTML = "usr: " + cpu_usage[0] + "% sys: " + cpu_usage[1];
+    document.getElementById(stage + "_cpu").textContent = "CPU: " + total + "%";
+    document.getElementById(stage + "_cpu_detail").textContent = "usr: " + cpu_usage[0] + "% sys: " + cpu_usage[1];
 }
 
 // Update stage cpu usage.
@@ -183,7 +183,7 @@ function update_stats(tracker, stage, isDynamic, time_required) {
             // Update tracker shortcut in nodes.
             var target = document.getElementById(stage + "/" + tracker + "_sc");
             if (target) {
-                target.innerHTML = tracker + ": " + cur + " " + unit;
+                target.textContent = tracker + ": " + cur + " " + unit;
             }
 
         }
@@ -255,7 +255,7 @@ var show_trackers_in_label = (function() {
                             // Update text and id for easier search later.
                             var target = document.getElementById(stage + "_" + (i+1));
                             target.setAttribute("id", stage + "/" + tracker + "_sc");
-                            target.innerHTML = tracker + ": " + cur + " " + unit;
+                            target.textContent = tracker + ": " + cur + " " + unit;
                         }
                     }
                 });
@@ -288,8 +288,7 @@ async function get_data(endpoint) {
             var elements = doc.querySelectorAll("a");
             var files = [];
             elements.forEach(function(el) {
-                var text = ((el.innerHTML).replaceAll("\n", "")).replaceAll(" ", "");
-                files.push(text);
+                files.push(el.getAttribute("href"));
             })
             return files;
         } else if (endpoint.includes("crash_stats")) {
@@ -731,7 +730,7 @@ class PipelineViewer {
 
         // Reset slider value to 100%
         slider.value = 100;
-        output.innerHTML = get_time(this.time_max, true);
+        output.textContent = get_time(this.time_max, true);
 
         // Show first two trackers
         var stage_names = Object.keys(trackers);
@@ -752,7 +751,7 @@ class PipelineViewer {
                         // Update text and id for easier search later.
                         var target = document.getElementById(stage + "_" + (i+1));
                         target.setAttribute("id", stage + "/" + tracker + "_sc");
-                        target.innerHTML = tracker + ": " + cur + " " + unit;
+                        target.textContent = tracker + ": " + cur + " " + unit;
                     }
                 }
             });
@@ -768,7 +767,7 @@ class PipelineViewer {
             var time_required = Math.floor((time_max - time_min) * percent + time_min);
 
             // Show required time in Y-M-D_H:M:S:MS format
-            output.innerHTML = get_time(time_required, true);
+            output.textContent = get_time(time_required, true);
 
             update_trackers(trackers, false, time_required);
         }

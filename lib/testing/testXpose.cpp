@@ -15,7 +15,9 @@
 #include <assert.h>   // for assert
 #include <cstdint>    // for int32_t
 #include <functional> // for bind, function
+#include <limits>     // for numeric_limits
 #include <memory>     // for __shared_ptr_access, shared_ptr
+#include <stdexcept>  // for invalid_argument
 #include <vector>     // for vector
 
 using kotekan::bufferContainer;
@@ -46,14 +48,21 @@ testXpose::testXpose(Config& config, const std::string& unique_name,
     num_frequencies(config.get<int>(unique_name, "num_frequencies")),
     num_xposed_frequencies(config.get<int>(unique_name, "num_xposed_frequencies")) {
 
+    const int64_t num_elements = static_cast<int64_t>(num_polarizations) * num_dishes;
+    if (num_polarizations <= 0 || num_dishes <= 0
+        || num_elements > std::numeric_limits<int32_t>::max()) {
+        throw std::invalid_argument("testXpose: element count is outside the scatter index range");
+    }
+
     out_xposed_buf = get_buffer("out_xposed_buf");
     out_xposed_buf->register_producer(unique_name);
     if (out_xposed_buf->frame_size
-        != num_times * num_xposed_frequencies * num_polarizations * num_dishes * sizeof(uint8_t))
+        != static_cast<size_t>(num_times) * num_xposed_frequencies * num_polarizations * num_dishes
+               * sizeof(uint8_t))
         FATAL_ERROR("Unexpected frames sizes for out_xposed_buf, expected {:d} received {:d}",
                     out_xposed_buf->frame_size,
-                    num_times * num_xposed_frequencies * num_polarizations * num_dishes
-                        * sizeof(uint8_t));
+                    static_cast<size_t>(num_times) * num_xposed_frequencies * num_polarizations
+                        * num_dishes * sizeof(uint8_t));
     out_xposed_buf->require_frame_desc(kotekan::GenericNDArray::describe(
         kotekan::int4x2_swapped_withoffset, "E",
         {num_times, num_xposed_frequencies, num_polarizations, num_dishes}, {"T", "F", "P", "D"},
@@ -61,10 +70,11 @@ testXpose::testXpose(Config& config, const std::string& unique_name,
 
     scatter_indices_buf = get_buffer("scatter_indices_buf");
     scatter_indices_buf->register_producer(unique_name);
-    if (scatter_indices_buf->frame_size != num_polarizations * num_dishes * sizeof(int32_t))
+    if (scatter_indices_buf->frame_size
+        != static_cast<size_t>(num_polarizations) * num_dishes * sizeof(int32_t))
         FATAL_ERROR("Unexpected frames sizes for scatter_indeces, expected {:d} received {:d}",
                     scatter_indices_buf->frame_size,
-                    num_polarizations * num_dishes * sizeof(int32_t));
+                    static_cast<size_t>(num_polarizations) * num_dishes * sizeof(int32_t));
     // TODO: this is not quite correct. Really if going to cylinder order
     // the array is {4,2,256} {"C", "P", "D"}
     scatter_indices_buf->require_frame_desc(kotekan::GenericNDArray::describe(
@@ -78,14 +88,16 @@ testXpose::testXpose(Config& config, const std::string& unique_name,
         buf->register_producer(unique_name);
         buf->require_frame_desc(kotekan::GenericNDArray::describe(
             kotekan::int4x2_swapped_withoffset, "E",
-            {num_frequencies, num_times, num_polarizations * num_dishes}, {"F", "T", "E"},
-            {1, 1, 1}));
+            {num_frequencies, num_times,
+             static_cast<std::ptrdiff_t>(num_polarizations) * num_dishes},
+            {"F", "T", "E"}, {1, 1, 1}));
         if (buf->frame_size
-            != num_polarizations * num_dishes * num_times * num_frequencies * sizeof(uint8_t))
+            != static_cast<size_t>(num_polarizations) * num_dishes * num_times * num_frequencies
+                   * sizeof(uint8_t))
             FATAL_ERROR("Input samples bufferer {:s} has unexpected size {:d} instead of {:d}",
                         it.value().get<std::string>(), buf->frame_size,
-                        num_polarizations * num_dishes * num_times * num_frequencies
-                            * sizeof(uint8_t));
+                        static_cast<size_t>(num_polarizations) * num_dishes * num_times
+                            * num_frequencies * sizeof(uint8_t));
         if (buf->num_frames != out_bufs.at(0)->num_frames)
             FATAL_ERROR("Input samples buffers have different number of frames: {:d} != {:d}",
                         buf->num_frames, out_bufs.at(0)->num_frames);
@@ -109,7 +121,7 @@ void testXpose::main_thread() {
     // some made up scattering that shuffles everyting one element forward (and
     // wraps around)
     std::vector<int32_t> scatter_indices(num_elements);
-    std::iota(scatter_indices.begin(), scatter_indices.end(), 1);
+    std::iota(scatter_indices.begin(), scatter_indices.end() - 1, 1);
     scatter_indices.back() = 0;
 
     // this is only done once
@@ -129,7 +141,7 @@ void testXpose::main_thread() {
     scatter_indices_buf->mark_frame_full(unique_name, scatter_indices_id);
 
     // for each time
-    int seq_num = 0;
+    uint64_t seq_num = 0;
     frameID out_xposed_id(out_xposed_buf);
     frameID out_id(out_bufs.at(0));
     while (!stop_thread) {
@@ -161,14 +173,16 @@ void testXpose::main_thread() {
                 const int f_xposed = buf_num * num_frequencies + f;
                 assert(f_xposed < num_xposed_frequencies);
                 for (int t = 0; t < num_times; ++t) {
-                    const int block_idx = f * num_times * num_elements + t * num_elements;
-                    const int xposed_block_idx =
-                        t * num_xposed_frequencies * num_elements + f_xposed * num_elements;
+                    const size_t block_idx =
+                        (static_cast<size_t>(f) * num_times + t) * num_elements;
+                    const size_t xposed_block_idx =
+                        (static_cast<size_t>(t) * num_xposed_frequencies + f_xposed) * num_elements;
                     for (int v = 0; v < 15 * 15 - 1; ++v) {
-                        const int el_idx =
-                            (v * 17 + 2 * f_xposed + t + seq_num * num_times) % num_elements;
-                        const int idx = block_idx + el_idx;
-                        assert((unsigned int)idx < out_bufs.at(buf_num)->frame_size);
+                        const int el_idx = (static_cast<uint64_t>(v) * 17 + uint64_t{2} * f_xposed
+                                            + t + seq_num * num_times)
+                                           % num_elements;
+                        const size_t idx = block_idx + el_idx;
+                        assert(idx < out_bufs.at(buf_num)->frame_size);
 
                         // build valid nibbles
                         uint8_t val = (((v / 15) + 1) << 4) | (((v % 15) + 1) << 0);
@@ -178,8 +192,8 @@ void testXpose::main_thread() {
 
                         // write transposed result, note that this replicates the
                         // scattering_indices knowledge
-                        const int xposed_idx = xposed_block_idx + (el_idx + 1) % num_elements;
-                        assert((unsigned int)xposed_idx < out_xposed_buf->frame_size);
+                        const size_t xposed_idx = xposed_block_idx + (el_idx + 1) % num_elements;
+                        assert(xposed_idx < out_xposed_buf->frame_size);
                         out_xposed_frame[xposed_idx] = val;
                     }
                 }

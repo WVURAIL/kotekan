@@ -209,7 +209,7 @@ inline std::vector<float> apod(std::vector<float>& x, float width = 1.,
             w.push_back(0.);
         } else {
             float y = 0.;
-            for (unsigned short n = 0; n < coeff.size(); n++) {
+            for (size_t n = 0; n < coeff.size(); n++) {
                 y += coeff[n] * std::cos(pi * (xi / width + 1) * n);
             }
             w.push_back(y);

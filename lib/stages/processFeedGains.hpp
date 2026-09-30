@@ -108,7 +108,7 @@ private:
     Buffer* out_buf;
 
     /// Number of elements in the output buffer
-    uint32_t out_num_values;
+    size_t out_num_values;
 
     /// Whether or not to conjugate the gains
     bool conjugate_gains;

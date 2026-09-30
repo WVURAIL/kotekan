@@ -231,7 +231,9 @@ inline std::string json_type_name(nlohmann::json& value) {
  * @return   Index into flattend matrix.
  */
 inline uint32_t cmap(uint32_t i, uint32_t j, uint32_t n) {
-    return (n * (n + 1) / 2) - ((n - i) * (n - i + 1) / 2) + (j - i);
+    const uint64_t size = n;
+    return static_cast<uint32_t>((size * (size + 1) / 2) - ((size - i) * (size - i + 1) / 2)
+                                 + (j - i));
 }
 
 /**

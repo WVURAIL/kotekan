@@ -85,7 +85,7 @@ public:
 
         // Set metadata
         upchan_gain_buffer->require_frame_desc(kotekan::NDArray<float16_t, 1>::describe(
-            "G", {upchan_max_num_channels * upchan_factor}, {"Fbar"}, {1}));
+            "G", {static_cast<ptrdiff_t>(upchan_max_num_channels) * upchan_factor}, {"Fbar"}, {1}));
         upchan_gain_buffer->allocate_new_metadata_object(frame_id);
         const auto& upchan_gain_meta =
             get_chord_metadata(upchan_gain_buffer->get_metadata(frame_id));
@@ -98,12 +98,13 @@ public:
                                                upchan_channels_set.end());
         const int upchan_num_channels = int(upchan_channels.size());
         assert(upchan_num_channels <= upchan_max_num_channels);
-        std::vector<int> coarse_freq(upchan_num_channels * upchan_factor);
-        std::vector<int> freq_upchan_factor(upchan_num_channels * upchan_factor);
-        std::vector<int> freq_upchan_index(upchan_num_channels * upchan_factor);
+        const ptrdiff_t num_upchan = static_cast<ptrdiff_t>(upchan_num_channels) * upchan_factor;
+        std::vector<int> coarse_freq(num_upchan);
+        std::vector<int> freq_upchan_factor(num_upchan);
+        std::vector<int> freq_upchan_index(num_upchan);
         for (int freq = 0; freq < upchan_num_channels; ++freq) {
             for (int upchan_index = 0; upchan_index < upchan_factor; ++upchan_index) {
-                const int idx = upchan_index + upchan_factor * freq;
+                const ptrdiff_t idx = upchan_index + static_cast<ptrdiff_t>(upchan_factor) * freq;
                 coarse_freq.at(idx) = upchan_channels.at(freq);
                 freq_upchan_factor.at(idx) = upchan_factor;
                 freq_upchan_index.at(idx) = upchan_index;
@@ -116,7 +117,7 @@ public:
         // Set buffer
         for (int freq = 0; freq < upchan_max_num_channels; ++freq) {
             for (int upchan_index = 0; upchan_index < upchan_factor; ++upchan_index) {
-                const int idx = upchan_index + upchan_factor * freq;
+                const ptrdiff_t idx = upchan_index + static_cast<ptrdiff_t>(upchan_factor) * freq;
                 assert(idx >= 0
                        && idx < std::ptrdiff_t(upchan_gain_buffer->frame_size
                                                / sizeof *upchan_gain_frame));

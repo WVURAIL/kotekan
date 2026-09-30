@@ -259,7 +259,9 @@ void gpuSimulateN2kCorr::main_thread() {
         meta_out->dims = 6;
         assert(meta_out->dims <= CHORD_META_MAX_DIM);
         meta_out->set_array_dimension(
-            0, nt_outer, "Tc", meta_in->get_time_downsampling_fpga() * _sub_integration_ntime);
+            0, nt_outer, "Tc",
+            static_cast<std::ptrdiff_t>(meta_in->get_time_downsampling_fpga())
+                * _sub_integration_ntime);
         meta_out->set_array_dimension(1, _num_local_freq, "F", 1);
         meta_out->set_array_dimension(2, num_triangle_blocks(_num_elements, _corr_blocksize),
                                       "DPhi", 16);

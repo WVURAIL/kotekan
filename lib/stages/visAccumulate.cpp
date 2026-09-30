@@ -28,6 +28,7 @@
 #include <cstring>    // for memcpy
 #include <exception>  // for exception
 #include <iterator>   // for back_insert_iterator, begin, end, back_inserter
+#include <limits>     // for numeric_limits
 #include <mutex>      // for mutex, lock_guard
 #include <numeric>    // for iota
 #include <optional>   // for optional, nullopt
@@ -120,12 +121,16 @@ visAccumulate::visAccumulate(Config& config, const std::string& unique_name,
 
     size_t num_elements = inputs.size();
 
+    if (num_elements > static_cast<size_t>(std::numeric_limits<uint16_t>::max()) + 1) {
+        throw std::invalid_argument("Number of inputs exceeds the product index range.");
+    }
+
     // Create the product specification
     std::vector<prod_ctype> prods;
     prods.reserve(num_elements * (num_elements + 1) / 2);
-    for (uint16_t i = 0; i < num_elements; i++) {
-        for (uint16_t j = i; j < num_elements; j++) {
-            prods.push_back({i, j});
+    for (size_t i = 0; i < num_elements; i++) {
+        for (size_t j = i; j < num_elements; j++) {
+            prods.push_back({static_cast<uint16_t>(i), static_cast<uint16_t>(j)});
         }
     }
 
