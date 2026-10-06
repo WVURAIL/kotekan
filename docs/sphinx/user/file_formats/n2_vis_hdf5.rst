@@ -443,7 +443,7 @@ attribute, in the N2 layout's element order. Each row names the dish the
 element belongs to and its polarization, and copies that dish's entry from
 the telescope's ``dish_inputs`` configuration. Dishes not populated in the
 configuration hold type ``Missing`` (-1) and label ``"Missing"``, so in a full
-layout their elements read ``"Missingp1"``, ``"Missingp2"``; compact layouts
+layout their elements read ``"MissingX"``, ``"MissingY"``; compact layouts
 leave them out.
 
 .. list-table::
@@ -504,9 +504,9 @@ leave them out.
    * - ``label``
      - (elements)
      - variable-length string
-     - Per-element label: the dish label with the 1-based polarization
-       appended, e.g. ``A1p1`` and ``A1p2`` for the two inputs of dish
-       ``A1``.
+     - Per-element label: the dish label with the polarization name
+       appended, e.g. ``A01X`` and ``A01Y`` for the two inputs of dish
+       ``A01``.
 
 Visibility and per-(frequency, time) datasets
 =============================================
@@ -717,14 +717,16 @@ processes and sends that mask downstream once per correlation frame; the writer
 records every stream's masks over the file's FPGA tick span, one row per mask
 frame. Rows lie on the streams' common grid of ``time_downsampling_fpga`` samples
 (the correlation frame length): the first row is the last grid sample at or
-before the span start, the last row the last grid sample before the span end. A
-stream is identified by the coarse frequencies its masks were applied to. The
-``stream`` axis holds every stream known when the file's first rows were
-written, in order of first frequency. Every frequency with data in the file must
-belong to one of its streams, so a stream that first appears while a file is
-open must carry no data in that file; the writer stops otherwise. Where a
-stream's frame did not reach the writer before its row was written, the row
-holds -1. The mask's element axes are the telescope's polarizations and dishes
+before the span start, the last row the last grid sample before the span end.
+The ``stream`` axis has ``num_bad_feed_mask_streams`` entries, one per X-engine
+half; stream ``k`` owns the frequency ids ``f`` with
+``(f - min_science_freq_id) % num_bad_feed_mask_streams == k``. Where a stream's
+frame did not reach the writer before its row was written, including every row
+before a stream's first frame, the row holds -1. The writer stops on a mask
+frame whose frequencies lie outside the science band or belong to more than one
+stream, on a stream whose frequency list changes, on a second frame for a
+sample already held, and on data at a frequency that its registered stream does
+not list. The mask's element axes are the telescope's polarizations and dishes
 in the fiducial element order (the mask buffer's ``[P, D]`` shape), independent
 of the file's ``input_order`` and layout. ``/flags`` remains the per-integration
 record: the same masks folded over each bin by ``N2Accumulate``.
@@ -749,8 +751,8 @@ record: the same masks folded over each bin by ``N2Accumulate``.
    * - ``stream_freq_id``
      - (streams, freqs)
      - int32
-     - The coarse frequency ids each stream's masks were applied to, -1 padded.
-       A file frequency's stream is the row that contains it.
+     - The coarse frequency ids each stream's masks were applied to, -1 padded;
+       all -1 for a stream that had not sent a frame when the file closed.
 
 Digital gains group (``/digital_gains``)
 ========================================
