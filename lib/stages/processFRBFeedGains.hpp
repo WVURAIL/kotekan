@@ -11,6 +11,7 @@
 #include "bufferContainer.hpp"
 #include "processFeedGains.hpp"
 
+#include <cstdint>
 #include <string>
 
 /**
@@ -18,7 +19,15 @@
  * @brief Merge, upchannelize, and apply weights to gain files.
  *
  * Applies the same processing as the parent, but sets the buffer metadata
- * expected by `CHIMEFRBBeamformer_chime_U16`.
+ * expected by `CHIMEFRBBeamformer_chime_U16_K4` and
+ * `CHIMEFRBBeamformer_chime_U16_K8`; the gain buffer is the same for both input
+ * bit depths.
+ *
+ * The output frames have a leading length-1 `TW` axis whose `dimscaling` is
+ * `frb1_phase_lifetime_in_samples`. That must equal the lifetime of the bad feed
+ * mask frames, which clock the output.
+ *
+ * @conf frb1_phase_lifetime_in_samples Int. How many FPGA samples one output frame covers.
  *
  * @author Liam Gray
  *
@@ -36,6 +45,7 @@ private:
 
     // config parameters required for metadata
     uint32_t num_polarizations;
+    std::int64_t frb1_phase_lifetime_in_samples;
 
     bool frb1_swap_MN;
     int num_dishes_M;
