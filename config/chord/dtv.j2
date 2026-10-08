@@ -5,7 +5,9 @@
       -e '{"dtv_enabled": true, "dtv_runtime_bundle_dir": "/path/to/bundle"}'
   Each half binds the bundle profiles whose chord_channel_id is in its coarse_freq list; a
   half with none logs "detector DISABLED" and writes zero products.  Every bound channel
-  must be calibrated in the bundle, so export only the channels under test.  See
+  must be calibrated in the bundle, so export only the channels under test.  The pathfinder's
+  GPU stages use the default CUDA streams (copies in on 0, copies out on 1, kernels on 2), so
+  the detector runs its kernels on stream 3 and copies its products out on stream 4.  See
   docs/sphinx/user/modules/pilotproxy.rst.
 -#}
 {% set dtv_runtime_bundle_dir = dtv_runtime_bundle_dir|default("data/pilotproxy_bundle") %}
@@ -60,6 +62,7 @@ run_dtv_detector:
         kotekan_stage: cudaProcess
         gpu_id: {{ n.id }}
         cpu_affinity: {{ n.gpu_cpus }}
+        num_cuda_streams: 5
         in_buffers:
             host_voltage_ringbuffer: host_voltage_ringbuffer{{ n.sfx }}
         out_buffers:
@@ -68,6 +71,7 @@ run_dtv_detector:
             host_dtv_fine_support: host_dtv_fine_support_buffer{{ n.sfx }}
         commands:
         - name: cudaPilotProxyDetector
+          cuda_stream: 3
           num_frequencies: num_local_freq
           voltage_name: voltage
           dtv_mask_name: dtv_mask
@@ -76,13 +80,17 @@ run_dtv_detector:
           pilot_profiles_path: {{ dtv_runtime_bundle_dir }}/pilot_profiles.json
           weights_path: {{ dtv_runtime_bundle_dir }}/weights.bin
         - name: cudaSyncOutput
+          cuda_stream: 4
         - name: cudaOutputData
+          cuda_stream: 4
           gpu_mem: dtv_mask_buffer
           out_buf: host_dtv_mask
         - name: cudaOutputData
+          cuda_stream: 4
           gpu_mem: dtv_powers_buffer
           out_buf: host_dtv_powers
         - name: cudaOutputData
+          cuda_stream: 4
           gpu_mem: dtv_fine_support_buffer
           out_buf: host_dtv_fine_support
 {% endfor %}
