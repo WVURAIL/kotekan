@@ -13,8 +13,9 @@
 {% set dtv_runtime_bundle_dir = dtv_runtime_bundle_dir|default("data/pilotproxy_bundle") %}
 {% set dtv_output_dir = dtv_output_dir|default("/scratch/dtv") %}
 
-# One frame per 8192-sample block: the mask byte, the three coarse powers
-# (lower, target, upper) and the fine rank support of each local frequency.
+# One frame per 8192-sample block: the mask byte, the three frame powers
+# (lower, target, upper; each the sum of 256 fine powers) and the fine rank
+# support of each local frequency.
 {% for n in numa_halves %}
 host_dtv_mask_buffer{{ n.sfx }}:
     kotekan_buffer: ndarray
