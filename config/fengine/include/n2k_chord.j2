@@ -2,6 +2,9 @@
 
 # CHORD n2k setup
 {% set n2k_rfi_name = n2k_rfi_name|default("dtv_RFImask" if dtv_apply_mask|default(false) else "rfi_RFImask") %}
+{# With DTV missing decisions counted as lost (dtv_chord.j2), the RFI count and the
+   packet-loss counts come from DtvRfiMask. #}
+{% set n2k_dtv_lost = dtv_apply_mask|default(false) and dtv_missing_decision_action|default("stop") == "mask" %}
 
 ################################################################################
 
@@ -143,7 +146,7 @@ run_n2_counting:
 
     count_rfi_mask:
         kotekan_stage: RfiMaskSum
-        in_buf: host_{{ n2k_rfi_name }}_buffer
+        in_buf: {{ "host_dtv_rfi_count_buffer" if n2k_dtv_lost else "host_" ~ n2k_rfi_name ~ "_buffer" }}
         out_buf: host_n2k_rficounts_buffer
 
     count_pl:
@@ -182,7 +185,7 @@ run_N2_accumulate:
     num_workers: 4
     in_buf: host_n2k_correlation_buffer
     in_counts_buf: host_n2k_counts_buffer
-    in_plcounts_buf: host_n2k_plcounts_buffer
+    in_plcounts_buf: {{ "host_dtv_plcounts_buffer" if n2k_dtv_lost else "host_n2k_plcounts_buffer" }}
     in_rficounts_buf: host_n2k_rficounts_buffer
     in_rfiframemask_buf: host_n2k_rfiframemask_buffer
     out_buf: host_n2_vis_buffer

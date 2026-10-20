@@ -129,6 +129,10 @@ Other keys:
     `What stops the run`_). The defaults, ``stop``, ``stop`` and 0, stop the
     run as before.
 
+``dtv_decouple_detector``, ``dtv_detach_timeout_s``
+    Give the detector its own detachable copy of the voltages (see
+    `What stops the run`_). Default false.
+
 These lists hold receiver IDs (``coarse_freq``), not ATSC channel numbers. They
 must not overlap, and every listed ID must be on the node, so they are set per
 node.
@@ -231,12 +235,39 @@ zero it waits that long for each decision; at the deadline it releases the
 frame excluded for every required frequency (``stop`` stops the run instead),
 logs and discards the decision if it arrives later, and after three missed
 deadlines in a row releases frames without waiting until decisions resume.
-Frames excluded this way are counted apart from RFI and DTV rejections in
+Frames excluded this way are counted in
 ``kotekan_dtvrfimask_missing_decision_frames_total`` (label ``reason``:
 ``not_evaluated``, ``deadline``, or ``late_discarded`` for dropped late
-decisions); ``RfiMaskSum`` still counts their samples as flagged. A hung
-detector still holds its voltage ring: the deadline keeps the correlator
-running only until the ring fills.
+decisions).
+
+Lost, not RFI. With ``dtv_apply_mask`` and ``dtv_missing_decision_action:
+mask``, ``dtv_chord.j2`` routes a frame without a decision to the packet-loss
+count N2Accumulate already keeps: ``DtvRfiMask`` reads the n2k packet-loss
+counts and writes them with every sample of that frequency's frame counted as
+lost (``host_dtv_plcounts_buffer``, N2Accumulate's ``in_plcounts_buf``), and
+writes a second mask without those exclusions (``host_dtv_rfi_count_buffer``)
+for ``RfiMaskSum``. The frame still leaves the visibilities and the valid
+counts through ``dtv_RFImask``, so in the N2 metadata its samples appear in
+``n_pl_fpga_ticks``, not in ``n_rfi_fpga_ticks`` or ``n_rfi_only_fpga_ticks``.
+This needs one n2k sub-integration per detector block, as on CHORD
+(``n2k_sub_integration_ntime`` 8192); ``DtvRfiMask`` stops at startup
+otherwise. Without these buffers a frame without a decision is excluded through
+``dtv_RFImask`` alone and counted as RFI.
+
+A stalled detector. The detector reads the correlator's voltage ring, so a
+detector frame that never completes holds that ring and stalls the
+correlator. With ``dtv_decouple_detector`` the detector reads its own copy of
+the voltages instead: ``bufferCopy`` copies each voltage frame into
+``host_dtv_voltage_buffer`` and, when that buffer has stayed full for
+``dtv_detach_timeout_s`` (default 1 s), detaches it for the rest of the run,
+so the correlator's input is held at most that long once. The decision
+deadline then releases every later frame without a decision, as above; set
+``dtv_decision_deadline_s``. The copy costs a second host voltage buffer, a
+second GPU voltage ring and its host-to-GPU copy. It does not cover a detector
+call that blocks on the host inside ``execute``: the GPU processes of a device
+queue their commands under one lock, so that stalls every GPU process on the
+device. The ``fault_hang_frame`` and ``fault_hang_seconds`` keys hold one
+frame's voltage claim, for commissioning tests only.
 
 So an uncalibrated channel has to be left out of the bundle, or listed in
 ``dtv_permanent_mask_freq_ids``, before the run starts. A node with no bundle

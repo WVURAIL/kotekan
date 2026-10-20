@@ -21,6 +21,7 @@
 #include <bitset>             // for bitset
 #include <cassert>            // for assert
 #include <cctype>             // for isxdigit
+#include <chrono>             // for duration
 #include <cmath>              // for isfinite
 #include <cstddef>            // for ptrdiff_t
 #include <cstdint>            // for uint64_t, int8_t, uint8_t
@@ -38,6 +39,7 @@
 #include <sstream>            // for istringstream
 #include <stdexcept>          // for runtime_error
 #include <string>             // for string, stoull
+#include <thread>             // for sleep_for
 #include <vector>             // for vector
 
 #ifdef WITH_SSL
@@ -639,6 +641,10 @@ private:
  * @conf fault_inject_frame         Int. Commissioning test only: at this frame, pass the
  *                                  core an invalid anchor so it reports an error
  *                                  (default -1, off).
+ * @conf fault_hang_frame           Int. Commissioning test only: hold this frame's voltage
+ *                                  claim for fault_hang_seconds before releasing it, as a
+ *                                  frame whose GPU work does not complete (default -1, off).
+ * @conf fault_hang_seconds         Float. Length of that block (default 0).
  */
 class cudaPilotProxyDetector : public cudaCommand {
 public:
@@ -672,6 +678,8 @@ private:
     std::set<int> control_freq_ids;
     const std::string runtime_failure_mode;
     const int fault_inject_frame;
+    const int fault_hang_frame;
+    const double fault_hang_seconds;
 
     // Kotekan buffer names
     const std::string voltage_name;
@@ -724,6 +732,8 @@ cudaPilotProxyDetector::cudaPilotProxyDetector(kotekan::Config& config,
     runtime_failure_mode(
         config.get_default<std::string>(unique_name, "runtime_failure_mode", "stop")),
     fault_inject_frame(config.get_default<int>(unique_name, "fault_inject_frame", -1)),
+    fault_hang_frame(config.get_default<int>(unique_name, "fault_hang_frame", -1)),
+    fault_hang_seconds(config.get_default<double>(unique_name, "fault_hang_seconds", 0.0)),
     // Buffer names
     voltage_name(config.get_default<std::string>(unique_name, "voltage_name", "voltage")),
     dtv_mask_name(config.get_default<std::string>(unique_name, "dtv_mask_name", "dtv_mask")),
@@ -1126,6 +1136,13 @@ cudaEvent_t cudaPilotProxyDetector::runtime_failure(const std::string& reason,
 }
 
 void cudaPilotProxyDetector::finalize_frame() {
+    // A frame whose GPU work never completes holds its voltage claim here, in the results
+    // thread, outside the device's command lock.
+    if (gpu_frame_id == fault_hang_frame) {
+        ERROR("PilotProxy fault injection: blocking frame {:d} for {:.1f} s", gpu_frame_id,
+              fault_hang_seconds);
+        std::this_thread::sleep_for(std::chrono::duration<double>(fault_hang_seconds));
+    }
     voltage.finish_read();
     if (bf_mask)
         bf_mask->finish_read();

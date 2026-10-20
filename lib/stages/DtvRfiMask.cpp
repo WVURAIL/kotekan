@@ -51,6 +51,14 @@
  * @buffer  out_buf     The combined mask, same format as rfi_buf.
  * @buffer  fine_support_buf Optional int32 [F,2] rows [rank_valid,n_bulk].
  *         (-1,-1) means no fine test; 0/1 means invalid/valid rank support.
+ * @buffer  plcounts_in_buf  Optional packet-loss counts from CountLostPLSamplesScalar,
+ *         NDArray int32 [1, F], one sub-integration per detector block.
+ * @buffer  plcounts_out_buf The same counts with every sample of a missing decision's
+ *         frequency counted as lost; feed it to N2Accumulate as in_plcounts_buf.
+ * @buffer  rfi_count_buf    The combined mask without the missing-decision exclusions, same
+ *         format as rfi_buf; feed it to RfiMaskSum so the RFI count leaves those frames out.
+ *         The three lost-sample buffers go together. Without them a missing decision is
+ *         excluded through out_buf alone and RfiMaskSum counts it as RFI.
  *
  * @conf    num_local_freq  int  Frequencies per frame.
  * @conf    num_times       int  Samples per detector block; must be 8192 or 16384.
@@ -135,6 +143,26 @@ public:
         output->require_frame_desc(desc);
         dtv->require_frame_desc(kotekan::GenericNDArray::describe(kotekan::int8, "dtv_mask",
                                                                   {frequencies}, {"F"}, {1}));
+        if (config.exists(unique_name, "rfi_count_buf")
+            || config.exists(unique_name, "plcounts_in_buf")
+            || config.exists(unique_name, "plcounts_out_buf")) {
+            rfi_count = get_buffer("rfi_count_buf");
+            plcounts_in = get_buffer("plcounts_in_buf");
+            plcounts_out = get_buffer("plcounts_out_buf");
+            rfi_count->register_producer(unique_name);
+            plcounts_in->register_consumer(unique_name);
+            plcounts_out->register_producer(unique_name);
+            if (rfi_count->frame_size != rfi->frame_size
+                || plcounts_in->frame_size != size_t(frequencies) * sizeof(int32_t)
+                || plcounts_out->frame_size != plcounts_in->frame_size)
+                FATAL_ERROR("DtvRfiMask lost-sample buffer sizes do not match one detector block");
+            rfi_count->require_frame_desc(desc);
+            const auto counts_desc =
+                kotekan::GenericNDArray::describe(kotekan::int32, "pl_lost_counts_scalar",
+                                                  {1, frequencies}, {"Tc", "F"}, {num_times, 1});
+            plcounts_in->require_frame_desc(counts_desc);
+            plcounts_out->require_frame_desc(counts_desc);
+        }
         if (support) {
             support->register_consumer(unique_name);
             if (support->frame_size != size_t(frequencies) * 2 * sizeof(int32_t))
@@ -147,6 +175,9 @@ public:
     void main_thread() override {
         N2::frameID rfi_id(rfi), dtv_id(dtv), out_id(output);
         N2::frameID support_id(support ? support : dtv);
+        N2::frameID rfi_count_id(rfi_count ? rfi_count : output);
+        N2::frameID plcounts_in_id(plcounts_in ? plcounts_in : rfi);
+        N2::frameID plcounts_out_id(plcounts_out ? plcounts_out : rfi);
         bool started = false;
         int64_t next_seq = 0;
         // Sequence of the oldest frame whose decision is neither applied nor discarded.
@@ -184,6 +215,24 @@ public:
                         if (std::find(freq.begin(), freq.end(), id) == freq.end())
                             FATAL_ERROR("DtvRfiMask threshold frequency ID {:d} is absent", id);
                 next_decision_seq = seq;
+            }
+
+            const int32_t* plcounts = nullptr;
+            if (plcounts_in) {
+                // Packet-loss counts come from upstream, not from the detector.
+                plcounts = reinterpret_cast<const int32_t*>(
+                    plcounts_in->wait_for_full_frame(unique_name, plcounts_in_id));
+                if (!plcounts)
+                    break;
+                const auto pm = get_chord_metadata(plcounts_in, plcounts_in_id);
+                pm->check_frame_desc(plcounts_in->get_frame_desc<kotekan::GenericNDArray>());
+                if (pm->get_fpga_seq_num() != seq
+                    || pm->get_time_downsampling_fpga() != int64_t(rp) * mask_rows
+                    || !pm->has_coarse_freq() || pm->get_coarse_freq() != freq)
+                    FATAL_ERROR("DtvRfiMask packet-loss counts identity mismatch");
+                for (int f = 0; f < frequencies; ++f)
+                    if (plcounts[f] < 0 || plcounts[f] > mask_rows * 1024)
+                        FATAL_ERROR("DtvRfiMask packet-loss count out of range");
             }
 
             // Wait for this frame's decision, dropping decisions for frames already released.
@@ -248,7 +297,9 @@ public:
                 discarded_in_a_row = 0;
             }
 
-            std::vector<bool> excluded(frequencies);
+            // rfi_excluded: rejections, invalid rank support and the permanent mask, counted as
+            // RFI. missing: required frequencies without a decision, which are invalid.
+            std::vector<bool> rfi_excluded(frequencies), missing(frequencies);
             if (!reject) {
                 // No decision by the deadline.
                 if (missing_action != "mask")
@@ -263,8 +314,10 @@ public:
                     ERROR("DtvRfiMask {:d} decisions in a row missed their deadline: frames are "
                           "released masked without waiting until decisions resume",
                           missed_in_a_row);
-                for (int f = 0; f < frequencies; ++f)
-                    excluded[f] = listed(permanent, freq[f]) || listed(required, freq[f]);
+                for (int f = 0; f < frequencies; ++f) {
+                    rfi_excluded[f] = listed(permanent, freq[f]);
+                    missing[f] = listed(required, freq[f]) && !listed(control, freq[f]);
+                }
             } else {
                 if (missed_in_a_row > 0)
                     INFO("DtvRfiMask decisions resumed at seq {:d} after {:d} missed deadline(s)",
@@ -275,22 +328,24 @@ public:
                 for (int f = 0; f < frequencies; ++f) {
                     if (reject[f] != 0 && reject[f] != 1)
                         FATAL_ERROR("DtvRfiMask detector decision must be zero or one");
-                    bool invalid = false;
+                    bool invalid = false, unevaluated_row = false;
                     if (fine) {
                         const int32_t valid = fine[2 * f], count = fine[2 * f + 1];
                         if (!((valid == -1 && count == -1)
                               || ((valid == 0 || valid == 1) && count >= 0 && count <= 256
                                   && (valid == 0 || count > 0))))
                             FATAL_ERROR("DtvRfiMask malformed fine support row");
-                        const bool missing = valid == -1 && listed(required, freq[f]);
-                        if (missing && missing_action != "mask")
+                        unevaluated_row = valid == -1 && listed(required, freq[f]);
+                        if (unevaluated_row && missing_action != "mask")
                             FATAL_ERROR("DtvRfiMask required fine threshold was not evaluated");
-                        unevaluated = unevaluated || missing;
-                        invalid = valid == 0 || missing;
+                        unevaluated = unevaluated || unevaluated_row;
+                        invalid = valid == 0;
                     }
                     // A control decision is recorded, never applied.
-                    excluded[f] = !listed(control, freq[f])
-                                  && (reject[f] || invalid || listed(permanent, freq[f]));
+                    const bool applied = !listed(control, freq[f]);
+                    rfi_excluded[f] =
+                        applied && (reject[f] || invalid || listed(permanent, freq[f]));
+                    missing[f] = applied && unevaluated_row;
                 }
                 if (unevaluated) {
                     missing_frames.labels({"not_evaluated"}).inc();
@@ -304,18 +359,31 @@ public:
                 reported_unevaluated = unevaluated;
             }
 
-            auto* combined = output->wait_for_empty_frame(unique_name, out_id);
-            if (!combined)
+            std::vector<bool> excluded(frequencies);
+            for (int f = 0; f < frequencies; ++f)
+                excluded[f] = rfi_excluded[f] || missing[f];
+            if (!write_mask(output, out_id, keep, excluded, rm))
                 break;
-            std::memcpy(combined, keep, rfi->frame_size);
-            for (int t = 0; t < mask_rows; ++t)
+            if (rfi_count) {
+                // The RFI count leaves out the invalid frames; their samples count as lost.
+                if (!write_mask(rfi_count, rfi_count_id, keep, rfi_excluded, rm))
+                    break;
+                auto* lost = reinterpret_cast<int32_t*>(
+                    plcounts_out->wait_for_empty_frame(unique_name, plcounts_out_id));
+                if (!lost)
+                    break;
+                std::memcpy(lost, plcounts, plcounts_in->frame_size);
                 for (int f = 0; f < frequencies; ++f)
-                    if (excluded[f])
-                        std::memset(combined + (t * frequencies + f) * 128, 0, 128);
-            output->allocate_new_metadata_object(out_id);
-            const auto om = get_chord_metadata(output, out_id);
-            om->deepCopy(rm);
-            om->check_frame_desc(output->get_frame_desc<kotekan::GenericNDArray>());
+                    if (missing[f])
+                        lost[f] = mask_rows * 1024;
+                plcounts_out->allocate_new_metadata_object(plcounts_out_id);
+                const auto lm = get_chord_metadata(plcounts_out, plcounts_out_id);
+                lm->deepCopy(get_chord_metadata(plcounts_in, plcounts_in_id));
+                lm->check_frame_desc(plcounts_out->get_frame_desc<kotekan::GenericNDArray>());
+                plcounts_in->mark_frame_empty(unique_name, plcounts_in_id++);
+                plcounts_out->mark_frame_full(unique_name, plcounts_out_id++);
+                rfi_count->mark_frame_full(unique_name, rfi_count_id++);
+            }
             started = true;
             next_seq = seq + int64_t(rp) * mask_rows;
             period = rp;
@@ -351,6 +419,24 @@ private:
             FATAL_ERROR("DtvRfiMask requires un-upchannelized coarse frequencies");
     }
 
+    /// Write the SK mask with every time bit of the excluded frequencies cleared.
+    bool write_mask(Buffer* buffer, N2::frameID& id, const uint8_t* keep,
+                    const std::vector<bool>& excluded, const std::shared_ptr<chordMetadata>& rm) {
+        auto* frame = buffer->wait_for_empty_frame(unique_name, id);
+        if (!frame)
+            return false;
+        std::memcpy(frame, keep, rfi->frame_size);
+        for (int t = 0; t < mask_rows; ++t)
+            for (int f = 0; f < frequencies; ++f)
+                if (excluded[f])
+                    std::memset(frame + (t * frequencies + f) * 128, 0, 128);
+        buffer->allocate_new_metadata_object(id);
+        const auto meta = get_chord_metadata(buffer, id);
+        meta->deepCopy(rm);
+        meta->check_frame_desc(buffer->get_frame_desc<kotekan::GenericNDArray>());
+        return true;
+    }
+
     /// Wait for a full frame: 0 when it is there, 1 past the deadline, -1 on shutdown.
     /// Without a deadline (decision_deadline_s 0) the wait has no timeout.
     int wait_full(Buffer* buffer, const int id, const timespec& deadline) {
@@ -362,6 +448,8 @@ private:
     const int frequencies;
     const int mask_rows;
     Buffer *rfi, *dtv, *output, *support;
+    // Optional lost-sample route: all three or none.
+    Buffer *rfi_count = nullptr, *plcounts_in = nullptr, *plcounts_out = nullptr;
     std::vector<int> permanent, required, control;
     const std::string missing_action;
     const double deadline_s;

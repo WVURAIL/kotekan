@@ -16,11 +16,60 @@
 #   dtv_runtime_failure_mode      "stop" or "degrade" on a run-time detector error
 #   dtv_missing_decision_action   "stop" or "mask" for a missing required decision
 #   dtv_decision_deadline_s       seconds DtvRfiMask waits for a decision (0: no limit)
+#   dtv_decouple_detector         the detector reads its own copy of the voltages, which a
+#                                 copy buffer full for dtv_detach_timeout_s (default 1 s)
+#                                 detaches, so a stalled detector cannot hold the
+#                                 correlator's voltage ring (set a deadline)
+# With dtv_apply_mask and dtv_missing_decision_action "mask", frames without a decision
+# count as lost (n2k packet-loss counts), not as RFI.
+{% set dtv_decouple = dtv_decouple_detector|default(false) %}
+{% set dtv_voltage = "dtv_voltage" if dtv_decouple else "voltage" %}
+{% set dtv_lost = dtv_apply_mask|default(false) and dtv_missing_decision_action|default("stop") == "mask" %}
 
 
 ################################################################################
 
 # Buffers
+
+{% if dtv_decouple %}
+# The detector's copy of the voltages; bufferCopy detaches it when it stays full.
+host_dtv_voltage_buffer:
+    kotekan_buffer: ndarray
+    num_frames: buffer_depth
+    value_type: int4x2_swapped_withoffset
+    extents: [num_times, num_frequencies, num_polarizations, num_dishes]
+    quantity_name: "E"
+    dimnames: ["T", "F", "P", "D"]
+    dimscalings: [1, 1, 1, 1]
+    metadata_pool: main_pool
+host_dtv_voltage_ringbuffer:
+    kotekan_buffer: ring
+    ring_buffer_size: buffer_depth * num_dishes * num_polarizations * num_frequencies * num_times
+    metadata_pool: main_pool
+
+run_copy_dtv_voltage:
+    kotekan_stage: bufferCopy
+    in_buf: host_voltage_buffer
+    out_bufs:
+        - host_dtv_voltage_buffer
+    detach_timeout_s: {{ dtv_detach_timeout_s|default(1.0) }}
+
+run_send_dtv_voltage:
+    gpu_0:
+        kotekan_stage: cudaProcess
+        gpu_id: 0
+        in_buffers:
+            host_dtv_voltage_buffer: host_dtv_voltage_buffer
+        out_buffers:
+            host_dtv_voltage_ringbuffer: host_dtv_voltage_ringbuffer
+        commands:
+        - name: cudaCopyToRingbuffer
+          input_size: num_dishes * num_polarizations * num_frequencies * num_times
+          ring_buffer_size: buffer_depth * input_size
+          in_buf: host_dtv_voltage_buffer
+          signal_buf: host_dtv_voltage_ringbuffer
+          gpu_mem_output: dtv_voltage_buffer
+{% endif %}
 
 host_dtv_mask_buffer:
     kotekan_buffer: ndarray
@@ -62,7 +111,7 @@ run_dtv_detector:
         gpu_id: 0
         num_cuda_streams: 5
         in_buffers:
-            host_voltage_ringbuffer: host_voltage_ringbuffer
+            host_{{ dtv_voltage }}_ringbuffer: host_{{ dtv_voltage }}_ringbuffer
 {% if dtv_exclude_bad_inputs|default(false) %}
             host_bf_mask_ringbuffer: host_bf_mask_ringbuffer
 {% endif %}
@@ -73,7 +122,7 @@ run_dtv_detector:
         commands:
         - name: cudaPilotProxyDetector
           cuda_stream: 3
-          voltage_name: voltage
+          voltage_name: {{ dtv_voltage }}
           dtv_mask_name: dtv_mask
           dtv_powers_name: dtv_powers
           dtv_fine_support_name: dtv_fine_support
@@ -129,6 +178,33 @@ run_combine_dtv_mask:
     missing_decision_action: {{ dtv_missing_decision_action|default("stop") }}
     decision_deadline_s: {{ dtv_decision_deadline_s|default(0) }}
     out_buf: host_dtv_RFImask_buffer
+{% if dtv_lost %}
+    plcounts_in_buf: host_n2k_plcounts_buffer
+    plcounts_out_buf: host_dtv_plcounts_buffer
+    rfi_count_buf: host_dtv_rfi_count_buffer
+
+# Missing decisions count as lost samples: N2Accumulate reads these packet-loss counts and
+# RfiMaskSum reads the mask without the missing-decision exclusions.
+host_dtv_plcounts_buffer:
+    kotekan_buffer: ndarray
+    num_frames: 4 * buffer_depth
+    value_type: int32
+    extents: [n2k_num_subintegrations, num_frequencies]
+    quantity_name: "pl_lost_counts_scalar"
+    dimnames: ["Tc", "F"]
+    dimscalings: [n2k_sub_integration_ntime, 1]
+    metadata_pool: main_pool
+
+host_dtv_rfi_count_buffer:
+    kotekan_buffer: ndarray
+    num_frames: 4 * buffer_depth
+    value_type: uint1x8
+    extents: [num_times / 1024, num_frequencies, 128]
+    quantity_name: "RFImask"
+    dimnames: ["T8hi128", "F", "T8lo128"]
+    dimscalings: [1024, 1, 8]
+    metadata_pool: main_pool
+{% endif %}
 
 run_send_dtv_RFImask:
     gpu_0:

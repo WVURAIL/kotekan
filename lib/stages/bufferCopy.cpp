@@ -1,17 +1,21 @@
 #include "bufferCopy.hpp"
 
-#include "StageFactory.hpp"   // for REGISTER_KOTEKAN_STAGE
-#include "kotekanLogging.hpp" // for INFO, DEBUG2, FATAL_ERROR
-#include "visUtil.hpp"        // for frameID, modulo
+#include "StageFactory.hpp"      // for REGISTER_KOTEKAN_STAGE
+#include "kotekanLogging.hpp"    // for INFO, DEBUG2, ERROR, FATAL_ERROR
+#include "prometheusMetrics.hpp" // for Metrics, Gauge
+#include "visUtil.hpp"           // for frameID, modulo
 
 #include "fmt.hpp"  // for compile_string_to_view, format, fmt
 #include "json.hpp" // for json, basic_json, iter_impl
 
+#include <algorithm>  // for count
+#include <chrono>     // for steady_clock, duration
 #include <cstring>    // for memcpy
 #include <functional> // for bind, function
 #include <memory>     // for shared_ptr
 #include <stdexcept>  // for runtime_error, invalid_argument
 #include <stdint.h>   // for uint8_t
+#include <thread>     // for sleep_for
 
 
 using nlohmann::json;
@@ -30,6 +34,14 @@ bufferCopy::bufferCopy(Config& config, const std::string& unique_name,
     in_buf->register_consumer(unique_name);
 
     _copy_metadata = config.get_default<bool>(unique_name, "copy_metadata", false);
+    _detach_timeout_s = config.get_default<double>(unique_name, "detach_timeout_s", 0.0);
+    if (!(_detach_timeout_s >= 0.0))
+        throw std::invalid_argument("bufferCopy: detach_timeout_s must be nonnegative");
+    if (_detach_timeout_s > 0.0) {
+        detached_gauge = &kotekan::prometheus::Metrics::instance().add_gauge(
+            "kotekan_buffercopy_detached_outputs", unique_name);
+        detached_gauge->set(0);
+    }
 
     json buffer_list = config.get<std::vector<json>>(unique_name, "out_bufs");
     Buffer* out_buf = nullptr;
@@ -71,16 +83,33 @@ bufferCopy::bufferCopy(Config& config, const std::string& unique_name,
     }
 }
 
+bool bufferCopy::wait_for_empty(Buffer* out_buf, const int frame_id) {
+    // This stage is the only producer, so a frame found empty stays empty.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::duration<double>(_detach_timeout_s);
+    while (!out_buf->is_frame_empty(frame_id)) {
+        if (stop_thread || std::chrono::steady_clock::now() >= deadline)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
 void bufferCopy::main_thread() {
 
     frameID in_frame_id(in_buf);
+    std::vector<bool> detached(out_bufs.size(), false);
+    int64_t frames_copied = 0;
 
     while (!stop_thread) {
         uint8_t* input_frame = in_buf->wait_for_full_frame(unique_name, in_frame_id);
         if (input_frame == nullptr)
             break;
 
-        for (auto& buffer_info : out_bufs) {
+        for (std::size_t i = 0; i < out_bufs.size(); ++i) {
+            auto& buffer_info = out_bufs[i];
+            if (detached[i])
+                continue;
 
             const std::string& internal_buffer_name = std::get<0>(buffer_info);
             Buffer* out_buf = std::get<1>(buffer_info);
@@ -90,6 +119,18 @@ void bufferCopy::main_thread() {
                 FATAL_ERROR("Cannot copy into buffer: {:s} as it has more than one producer.",
                             internal_buffer_name);
                 return;
+            }
+
+            if (_detach_timeout_s > 0.0 && !wait_for_empty(out_buf, out_frame_id)) {
+                if (stop_thread)
+                    break;
+                detached[i] = true;
+                detached_gauge->set(std::count(detached.begin(), detached.end(), true));
+                ERROR("Output buffer {:s} stayed full for {:.3f} s after {:d} input frames: its "
+                      "consumer has fallen behind, so it is DETACHED and gets no more frames "
+                      "until a restart",
+                      out_buf->buffer_name, _detach_timeout_s, frames_copied);
+                continue;
             }
 
             /// Wait for an output frame
@@ -119,6 +160,7 @@ void bufferCopy::main_thread() {
 
         // Increase the in_frame_id for the input buffer
         in_frame_id++;
+        frames_copied++;
     }
 exit_loop:;
 }
