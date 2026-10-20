@@ -72,6 +72,7 @@ def setup_pipeline(
     fine_support=False,
     num_times=T,
     reject_finite=False,
+    plcounts=False,
 ):
     T = num_times
     pipeline = Pipeline(tmp_path, runtime)
@@ -90,7 +91,7 @@ def setup_pipeline(
     pipeline.generator["array_shape"] = [T, F, 2, D]
     # Generate metadata-bearing input files first, then introduce reproducible
     # packet loss and masks and replay through the actual production stages.
-    for name, size, shape, dims, scales, kind, quantity, period in (
+    generated = [
         (
             "rfi_RFImask",
             T * F // 8,
@@ -112,7 +113,21 @@ def setup_pipeline(
             256,
         ),
         ("dtv_mask", F, [F], ["F"], [1], "const8", "dtv_mask", T * 4),
-    ):
+    ]
+    if plcounts:
+        generated.append(
+            (
+                "n2k_plcounts",
+                F * 4,
+                [1, F],
+                ["Tc", "F"],
+                [T, 1],
+                "const32",
+                "pl_lost_counts_scalar",
+                T * 4,
+            )
+        )
+    for name, size, shape, dims, scales, kind, quantity, period in generated:
         cfg[f"host_{name}_buffer"] = buffer(size)
         cfg[f"gen_{name}"] = dict(
             kotekan_stage="testDataGen",
@@ -206,6 +221,9 @@ def setup_pipeline(
         if index == 1:
             decision[:] = 1
         raw_payload(source("dtv_mask"), (F,))[:] = decision
+        if plcounts:
+            lost = np.array([10 * index + f for f in range(F)], dtype="<i4")
+            raw_payload(source("n2k_plcounts"), (F * 4,))[:] = lost.view(np.uint8)
         if fine_support:
             support = np.array([[1, 124], [0, 0], [-1, -1], [1, 126]], dtype="<i4")
             if index % 2:
@@ -244,6 +262,8 @@ def setup_pipeline(
     input_names = ["voltage", "rfi_RFImask", "pl_expanded_mask", "dtv_mask"]
     if fine_support:
         input_names.append("dtv_fine_support")
+    if plcounts:
+        input_names.append("n2k_plcounts")
     for name in input_names:
         cfg.pop(f"gen_{name}", None)
         cfg.pop(f"dump_{name}", None)
@@ -419,6 +439,51 @@ def setup_pipeline(
             )
         }
         cfg[f"dump_{product}"] = dump(product)
+    if plcounts:
+        # Missing decisions count as lost samples, and the RFI count leaves them out.
+        for name, dtype, extents, quantity, dims, scales in (
+            (
+                "n2k_plcounts",
+                "int32",
+                [1, F],
+                "pl_lost_counts_scalar",
+                ["Tc", "F"],
+                [T, 1],
+            ),
+            (
+                "dtv_plcounts",
+                "int32",
+                [1, F],
+                "pl_lost_counts_scalar",
+                ["Tc", "F"],
+                [T, 1],
+            ),
+            (
+                "dtv_rfi_count",
+                "uint1x8",
+                [T // 1024, F, 128],
+                "RFImask",
+                ["T8hi128", "F", "T8lo128"],
+                [1024, 1, 8],
+            ),
+        ):
+            cfg[f"host_{name}_buffer"] = dict(
+                kotekan_buffer="ndarray",
+                num_frames=4,
+                value_type=dtype,
+                extents=extents,
+                quantity_name=quantity,
+                dimnames=dims,
+                dimscalings=scales,
+                metadata_pool="main_pool",
+            )
+        cfg["combine"].update(
+            plcounts_in_buf="host_n2k_plcounts_buffer",
+            plcounts_out_buf="host_dtv_plcounts_buffer",
+            rfi_count_buf="host_dtv_rfi_count_buffer",
+        )
+        cfg["count_rfi"]["in_buf"] = "host_dtv_rfi_count_buffer"
+        cfg["dump_dtv_plcounts"] = dump("dtv_plcounts")
     return pipeline, keep_masks, pl_masks, decisions
 
 
@@ -836,3 +901,186 @@ def test_template_passes_control_failure_and_bad_input_settings():
     assert detector["bf_mask_name"] == "bf_mask"
     assert gpu["in_buffers"]["host_bf_mask_ringbuffer"] == "host_bf_mask_ringbuffer"
     assert "bf_mask_lifetime_in_samples" in cfg and "host_bf_mask_ringbuffer" in cfg
+
+
+def packed(good):
+    return np.packbits(
+        good.reshape(T // 1024, 1024, F).transpose(0, 2, 1), axis=-1, bitorder="little"
+    )
+
+
+@pytest.mark.parametrize("case", ["not_evaluated", "deadline"])
+def test_missing_decisions_count_as_lost_not_rfi(tmp_path, runtime, case):
+    """Frames without a decision leave the visibilities, count as lost samples in the
+    packet-loss counts N2Accumulate reads, and stay out of RfiMaskSum's RFI count."""
+    pipeline, masks, _, decisions = setup_pipeline(
+        tmp_path, runtime, fine_support=True, plcounts=True
+    )
+    freq_ids = pipeline.generator["manual_freq_ids"]
+    combine = pipeline.config["combine"]
+    combine["missing_decision_action"] = "mask"
+    first_missing = 5
+    if case == "not_evaluated":
+        # Frequency 2's support rows are (-1, -1).
+        combine["require_fine_freq_ids"] = combine["require_fine_freq_ids"] + [
+            freq_ids[2]
+        ]
+    else:
+        combine["decision_deadline_s"] = 0.3
+        for name in ("dtv_mask", "dtv_fine_support"):
+            for path in sorted((tmp_path / "input").glob(f"{name}_*.raw"))[
+                first_missing:
+            ]:
+                path.unlink()
+    code, log = pipeline.run(timeout=120)
+    assert code == 0, log[-12000:]
+
+    def read(name, size):
+        frames = reference.read_raw_frames(str(tmp_path / f"out/{name}_*.raw"), size)
+        assert len(frames) == FRAMES
+        return frames
+
+    combined = read("dtv_RFImask", T * F // 8)
+    rficounts = read("rficounts", F * 4)
+    lost = read("dtv_plcounts", F * 4)
+    for index in range(FRAMES):
+        rfi_good = masks[index].copy()
+        missing = np.zeros(F, dtype=bool)
+        if case == "not_evaluated" or index < first_missing:
+            rfi_good &= ~decisions[index].astype(bool)[None, :]
+            rfi_good[:, 0 if index % 2 else 1] = False  # invalid rank support is RFI
+            missing[2] = case == "not_evaluated"
+        else:
+            missing[[0, 1]] = True  # every required frequency at the deadline
+        rfi_good[:, 3] = False  # the permanent mask
+        good = rfi_good & ~missing[None, :]
+        np.testing.assert_array_equal(
+            combined[index].payload.reshape(T // 1024, F, 128), packed(good)
+        )
+        np.testing.assert_array_equal(
+            rficounts[index].payload.view("<i4"), (~rfi_good).sum(axis=0)
+        )
+        want = np.array([10 * index + f for f in range(F)], dtype="<i4")
+        want[missing] = T
+        np.testing.assert_array_equal(lost[index].payload.view("<i4"), want)
+        assert lost[index].fpga_seq_num == combined[index].fpga_seq_num
+
+
+def add_decoupled_detector(pipeline):
+    """Give the detector its own voltage copy, detached by bufferCopy when it stays full."""
+    cfg = pipeline.config
+    # Two frames of copy and two of ring, so the eight-frame test overruns them.
+    cfg["host_dtv_voltage_buffer"] = copy.deepcopy(cfg["host_voltage_buffer"])
+    cfg["host_dtv_voltage_buffer"]["num_frames"] = 2
+    cfg["host_dtv_voltage_ringbuffer"] = copy.deepcopy(cfg["host_voltage_ringbuffer"])
+    cfg["host_dtv_voltage_ringbuffer"][
+        "ring_buffer_size"
+    ] = "2 * num_times * num_local_freq * num_polarizations * num_dishes"
+    cfg["copy_dtv_voltage"] = dict(
+        kotekan_stage="bufferCopy",
+        in_buf="host_voltage_buffer",
+        out_bufs=["host_dtv_voltage_buffer"],
+        detach_timeout_s=0.2,
+    )
+    sender = copy.deepcopy(cfg["run_send_voltage"])
+    sender["gpu_0"]["buffer_depth"] = 2  # one pipeline instance per copy frame
+    sender["gpu_0"]["in_buffers"] = {
+        "host_dtv_voltage_buffer": "host_dtv_voltage_buffer"
+    }
+    sender["gpu_0"]["out_buffers"] = {
+        "host_dtv_voltage_ringbuffer": "host_dtv_voltage_ringbuffer"
+    }
+    sender["gpu_0"]["commands"][0].update(
+        in_buf="host_dtv_voltage_buffer",
+        signal_buf="host_dtv_voltage_ringbuffer",
+        gpu_mem_output="dtv_voltage_buffer",
+        ring_buffer_size="2 * input_size",
+    )
+    cfg["send_dtv_voltage"] = sender
+    gpu = cfg["run_dtv_detector"]["gpu_0"]
+    gpu["in_buffers"] = {"host_dtv_voltage_ringbuffer": "host_dtv_voltage_ringbuffer"}
+    gpu["commands"][0]["voltage_name"] = "dtv_voltage"
+    gpu["buffer_depth"] = 2  # the depth of its voltage ring
+
+
+@pytest.mark.parametrize("decoupled", [True, False])
+def test_hung_detector_cannot_stall_the_correlator(tmp_path, runtime, decoupled):
+    """A detector that stops returning: with its own detachable voltage copy the
+    correlator keeps flowing and the frames are released masked at the deadline;
+    sharing the correlator's ring, the correlator waits for the detector."""
+    hang = 10.0
+    pipeline, masks, _, _ = setup_pipeline(
+        tmp_path, runtime, real_detector=True, fine_support=True
+    )
+    cfg = pipeline.config
+    freq_ids = pipeline.generator["manual_freq_ids"]
+    if decoupled:
+        add_decoupled_detector(pipeline)
+    cfg["run_dtv_detector"]["gpu_0"]["commands"][0].update(
+        fault_hang_frame=2, fault_hang_seconds=hang
+    )
+    cfg["combine"].update(missing_decision_action="mask", decision_deadline_s=0.5)
+    # A stalled detector writes fewer decisions before the finite input ends; the
+    # correlator outputs end the run.
+    for name in ("dump_dtv_mask", "dump_dtv_powers", "dump_dtv_fine_support"):
+        cfg[name].pop("exit_after_n_files", None)
+    code, log = pipeline.run(timeout=120)
+    assert code == 0, log[-12000:]
+    assert "blocking frame 2" in log, log[-12000:]
+    vis = sorted((tmp_path / "out").glob("n2k_correlation_*.raw"))
+    assert len(vis) == FRAMES
+    # The detector wrote its first frame before it blocked.
+    first = sorted((tmp_path / "out").glob("dtv_mask_*.raw"))[0].stat().st_mtime
+    spread = vis[-1].stat().st_mtime - first
+    combined = reference.read_raw_frames(
+        str(tmp_path / "out/dtv_RFImask_*.raw"), T * F // 8
+    )
+    released = []
+    for index, frame in enumerate(combined):
+        good = masks[index].copy()
+        good[:, [0, 2]] = False  # the permanent mask and the required frequency
+        if np.array_equal(frame.payload.reshape(T // 1024, F, 128), packed(good)):
+            released.append(index)
+    if decoupled:
+        assert "DETACHED" in log, log[-12000:]
+        assert (
+            spread < hang / 2
+        ), f"last correlator frame {spread:.1f} s after the first decision"
+        assert len(released) >= 3 and released[-1] == FRAMES - 1, released
+    else:
+        assert (
+            spread > hang * 0.8
+        ), f"last correlator frame {spread:.1f} s after the first decision"
+    assert freq_ids  # the released expectation covers the configured frequencies
+
+
+@pytest.mark.parametrize("lost", [False, True])
+def test_template_routes_lost_samples_and_the_decoupled_detector(lost):
+    env = Environment(loader=FileSystemLoader(str(ROOT / "config/fengine")))
+    settings = dict(dtv_apply_mask=True)
+    if lost:
+        settings.update(
+            dtv_missing_decision_action="mask",
+            dtv_decision_deadline_s=0.05,
+            dtv_decouple_detector=True,
+        )
+    cfg = yaml.safe_load(env.get_template("chord.j2").render(**settings))
+    combine = cfg["run_combine_dtv_mask"]
+    gpu = cfg["run_dtv_detector"]["gpu_0"]
+    rfi_count = cfg["run_n2_counting"]["count_rfi_mask"]["in_buf"]
+    plcounts = cfg["run_N2_accumulate"]["in_plcounts_buf"]
+    if not lost:
+        assert rfi_count == "host_dtv_RFImask_buffer"
+        assert plcounts == "host_n2k_plcounts_buffer"
+        assert "plcounts_in_buf" not in combine and "run_copy_dtv_voltage" not in cfg
+        assert gpu["commands"][0]["voltage_name"] == "voltage"
+        return
+    assert combine["plcounts_in_buf"] == "host_n2k_plcounts_buffer"
+    assert combine["plcounts_out_buf"] == plcounts == "host_dtv_plcounts_buffer"
+    assert combine["rfi_count_buf"] == rfi_count == "host_dtv_rfi_count_buffer"
+    assert cfg["run_copy_dtv_voltage"]["in_buf"] == "host_voltage_buffer"
+    assert cfg["run_copy_dtv_voltage"]["detach_timeout_s"] == 1.0
+    assert gpu["in_buffers"] == {
+        "host_dtv_voltage_ringbuffer": "host_dtv_voltage_ringbuffer"
+    }
+    assert gpu["commands"][0]["voltage_name"] == "dtv_voltage"
