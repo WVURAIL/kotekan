@@ -56,7 +56,7 @@ def expected_fine_products_with_support(block, freq_ids, bundle, weights, num_di
         if profile is None:
             continue
         calibration = profile["fine_calibration"]
-        assert calibration["status"] == "calibrated"
+        assert calibration["status"] in ("calibrated", "control")
         offset = profile["weight_bank_offset_bytes"]
         bank = weights[offset : offset + profile["weight_bank_nbytes"]]
         real, imag = reference.detector_rows_from_voltage(
@@ -833,3 +833,325 @@ def test_archive_review_profiles_allow_permanent_reject_limit(pipeline):
     masks = reference.read_raw_frames(str(pipeline.directory / "out/dtv_mask_*.raw"), 4)
     assert len(masks) == pipeline.config["num_gen_frames"]
     assert all(not frame.payload.any() for frame in masks)
+
+
+def profile_for(pipeline, freq_id):
+    (row,) = [
+        row
+        for row in pipeline.bundle["profiles"]
+        if row.get("receiver_channel_id", row.get("chord_channel_id")) == freq_id
+    ]
+    return row
+
+
+def add_fine_support(pipeline):
+    config = pipeline.config
+    config["host_dtv_fine_support_buffer"] = copy.deepcopy(
+        config["host_dtv_powers_buffer"]
+    )
+    config["host_dtv_fine_support_buffer"]["frame_size"] = config["num_local_freq"] * 8
+    gpu = config["run_dtv_detector"]["gpu_0"]
+    gpu["out_buffers"]["host_dtv_fine_support"] = "host_dtv_fine_support_buffer"
+    pipeline.detector["dtv_fine_support_name"] = "dtv_fine_support"
+    gpu["commands"].append(
+        dict(
+            name="cudaOutputData",
+            cuda_stream=4,
+            gpu_mem="dtv_fine_support_buffer",
+            out_buf="host_dtv_fine_support",
+        )
+    )
+    config["dump_dtv_fine_support"] = copy.deepcopy(config["dump_dtv_mask"])
+    config["dump_dtv_fine_support"].update(
+        in_buf="host_dtv_fine_support_buffer", file_name="dtv_fine_support"
+    )
+
+
+def make_control(pipeline, freq_id):
+    """Relabel the profile bound to freq_id as the channel 37 noise control."""
+    row = profile_for(pipeline, freq_id)
+    row["physical_channel"] = 37
+    row["fine_calibration"]["status"] = "control"
+    return row
+
+
+def test_channel_37_control_is_decided_and_recorded(pipeline):
+    pipeline.calibrate()
+    ids = pipeline.generator["manual_freq_ids"]
+    # A low word, so the control fires and its rejections are recorded.
+    make_control(pipeline, ids[2])["fine_calibration"]["cfar_multiplier_q16"] = 1 << 14
+    pipeline.detector["control_freq_ids"] = [ids[2]]
+    add_fine_support(pipeline)
+    code, output = pipeline.run()
+    assert code == 0, output[-12000:]
+    assert "as the noise CONTROL" in output, output[-12000:]
+    masks = pipeline.verify(fine_support=True)
+    # The control's decisions are written like any channel's; DtvRfiMask never applies them.
+    assert masks[:, 2].any()
+
+
+@pytest.mark.parametrize(
+    "case,diagnostic",
+    [
+        (
+            "not_listed",
+            "is the bundle's control profile but is not in control_freq_ids",
+        ),
+        (
+            "listed_calibrated",
+            "is not the bundle's control profile but is in control_freq_ids",
+        ),
+        ("listed_absent", "binds no control profile"),
+        ("listed_permanent", "in both control_freq_ids and permanent_mask_freq_ids"),
+        ("control_not_37", "only channel 37 is the control"),
+        ("calibrated_37", "only channel 37 is the control"),
+        ("channel_38", "outside ATSC 14-36"),
+    ],
+)
+def test_control_refusals(pipeline, case, diagnostic):
+    pipeline.calibrate()
+    ids = pipeline.generator["manual_freq_ids"]
+    if case in ("not_listed", "listed_permanent", "listed_absent"):
+        make_control(pipeline, ids[2])
+    pipeline.detector["control_freq_ids"] = {
+        "not_listed": [],
+        "listed_calibrated": [ids[0]],
+        "listed_absent": [ids[2], ids[1]],
+        "listed_permanent": [ids[2]],
+    }.get(case, [])
+    if case == "listed_permanent":
+        pipeline.detector["permanent_mask_freq_ids"] = [ids[2]]
+    row = profile_for(pipeline, ids[2])
+    if case == "control_not_37":
+        row["fine_calibration"]["status"] = "control"
+    elif case == "calibrated_37":
+        row["physical_channel"] = 37
+    elif case == "channel_38":
+        row["physical_channel"] = 38
+    code, output = pipeline.run()
+    assert code != 0, f"{case} was accepted"
+    assert diagnostic in output, output[-12000:]
+    assert not list((pipeline.directory / "out").glob("dtv_*.raw"))
+
+
+def add_bad_feed_mask(pipeline, bad_inputs, lifetime_blocks=2):
+    """Feed bufferBadInputs' mask ring to the detector, as the SK flagger reads it."""
+    config = pipeline.config
+    elements = config["num_polarizations"] * config["num_dishes"]
+    lifetime = lifetime_blocks * pipeline.block_samples
+    config["bf_mask_lifetime_in_samples"] = lifetime
+    config["updatable_config"] = {
+        "bad_inputs": {
+            "kotekan_update_endpoint": "json",
+            "bad_inputs": bad_inputs,
+            "update_id": "test_flags",
+        }
+    }
+    config["host_bf_mask_buffer"] = dict(
+        kotekan_buffer="ndarray",
+        num_frames="buffer_depth",
+        value_type="int8",
+        extents=[1, config["num_polarizations"], config["num_dishes"]],
+        quantity_name="bf_mask",
+        dimnames=["Tbf", "P", "D"],
+        dimscalings=[lifetime, 1, 1],
+        metadata_pool="main_pool",
+    )
+    config["host_bf_mask_ringbuffer"] = dict(
+        kotekan_buffer="ring",
+        ring_buffer_size=f"buffer_depth * {elements}",
+        metadata_pool="main_pool",
+    )
+    config["set_bf_mask"] = dict(
+        kotekan_stage="bufferBadInputs",
+        num_elements=elements,
+        input_order="CHIMEBeamformer",
+        output_order="CHIMEBeamformer",
+        updatable_config={"bad_inputs": "/updatable_config/bad_inputs"},
+        out_buf="host_bf_mask_buffer",
+        metadata_source="host_voltage_buffer",
+    )
+    config["run_send_bf_mask"] = {
+        "gpu_0": dict(
+            kotekan_stage="cudaProcess",
+            gpu_id=0,
+            in_buffers={"host_bf_mask_buffer": "host_bf_mask_buffer"},
+            out_buffers={"host_bf_mask_ringbuffer": "host_bf_mask_ringbuffer"},
+            commands=[
+                dict(
+                    name="cudaCopyToRingbuffer",
+                    input_size=elements,
+                    ring_buffer_size=f"buffer_depth * {elements}",
+                    in_buf="host_bf_mask_buffer",
+                    signal_buf="host_bf_mask_ringbuffer",
+                    gpu_mem_output="bf_mask_buffer",
+                )
+            ],
+        )
+    }
+    gpu = config["run_dtv_detector"]["gpu_0"]
+    gpu["in_buffers"]["host_bf_mask_ringbuffer"] = "host_bf_mask_ringbuffer"
+    pipeline.detector["bf_mask_name"] = "bf_mask"
+    config["dump_bf_mask"] = dict(
+        kotekan_stage="rawFileWrite",
+        in_buf="host_bf_mask_buffer",
+        file_name="bf_mask",
+        file_ext="raw",
+        prefix_hostname=False,
+        num_frames_per_file=1,
+        allow_ndarray=True,
+    )
+
+
+@pytest.mark.parametrize("lifetime_blocks", [1, 2])
+def test_bad_inputs_are_excluded_before_the_power_sum(pipeline, lifetime_blocks):
+    """A flagged input adds nothing: every output equals the CPU reference run on
+    voltages whose flagged inputs are zero."""
+    pipeline.calibrate()
+    config = pipeline.config
+    num_dishes = config["num_dishes"]
+    bad = [1, num_dishes + 3, num_dishes + 4]  # both polarizations, [P][D] order
+    add_bad_feed_mask(pipeline, bad, lifetime_blocks)
+    add_fine_support(pipeline)
+    code, output = pipeline.run()
+    assert code == 0, output[-12000:]
+    assert "are excluded from the detector's power sums" in output, output[-12000:]
+    elements = 2 * num_dishes
+    (first,) = reference.read_raw_frames(
+        str(pipeline.directory / "out/bf_mask_*.raw"), elements
+    )[:1]
+    good = first.payload.view(np.int8).astype(bool)
+    assert not good[bad].any() and good.sum() == elements - len(bad)
+
+    freq_ids = pipeline.generator["manual_freq_ids"]
+    num_freq = len(freq_ids)
+    voltage = reference.read_raw_frames(
+        str(pipeline.directory / "out/voltage_*.raw"),
+        config["num_times"] * num_freq * elements,
+    )
+    masks = reference.read_raw_frames(
+        str(pipeline.directory / "out/dtv_mask_*.raw"), num_freq
+    )
+    powers = reference.read_raw_frames(
+        str(pipeline.directory / "out/dtv_powers_*.raw"), num_freq * 24
+    )
+    support = reference.read_raw_frames(
+        str(pipeline.directory / "out/dtv_fine_support_*.raw"), num_freq * 8
+    )
+    weights = (pipeline.directory / "bundle/weights.bin").read_bytes()
+    changed = False
+    for index, frame in enumerate(voltage):
+        block = frame.payload.reshape(-1, num_freq, elements).copy()
+        unmasked = expected_fine_products_with_support(
+            block.reshape(-1), freq_ids, pipeline.bundle, weights, num_dishes
+        )
+        block[:, :, ~good] = 0x88  # offset-binary complex zero
+        want = expected_fine_products_with_support(
+            block.reshape(-1), freq_ids, pipeline.bundle, weights, num_dishes
+        )
+        np.testing.assert_array_equal(masks[index].payload, want[0])
+        np.testing.assert_array_equal(
+            powers[index].payload.view("<u8").reshape(num_freq, 3), want[1]
+        )
+        np.testing.assert_array_equal(
+            support[index].payload.view("<i4").reshape(num_freq, 2), want[2]
+        )
+        changed = changed or not np.array_equal(unmasked[1], want[1])
+    assert changed, "the flagged inputs never changed the frame powers"
+
+
+def test_bad_feed_mask_lifetime_must_hold_whole_blocks(pipeline):
+    pipeline.calibrate()
+    add_bad_feed_mask(pipeline, [1])
+    pipeline.config["bf_mask_lifetime_in_samples"] = pipeline.block_samples // 2
+    pipeline.config["host_bf_mask_buffer"]["dimscalings"][0] = (
+        pipeline.block_samples // 2
+    )
+    code, output = pipeline.run()
+    assert code != 0
+    assert "must be a positive multiple of the detector block" in output, output[
+        -12000:
+    ]
+
+
+@pytest.mark.parametrize("mode", ["stop", "degrade"])
+def test_runtime_detector_failure(pipeline, mode):
+    """A mid-run core error stops the run, or in degrade mode ends decisions with
+    support (-1, -1) while the pipeline runs on."""
+    pipeline.calibrate()
+    add_fine_support(pipeline)
+    failed = 3
+    pipeline.detector.update(runtime_failure_mode=mode, fault_inject_frame=failed)
+    code, output = pipeline.run()
+    if mode == "stop":
+        assert code != 0, output[-12000:]
+        assert f"PilotProxy detector failed at frame {failed}" in output, output[
+            -12000:
+        ]
+        assert "anchor_bin must be in [0, 256)" in output, output[-12000:]
+        return
+    assert code == 0, output[-12000:]
+    assert "the detector is DEGRADED" in output, output[-12000:]
+    num_freq = len(pipeline.generator["manual_freq_ids"])
+    masks = reference.read_raw_frames(
+        str(pipeline.directory / "out/dtv_mask_*.raw"), num_freq
+    )
+    powers = reference.read_raw_frames(
+        str(pipeline.directory / "out/dtv_powers_*.raw"), num_freq * 24
+    )
+    support = reference.read_raw_frames(
+        str(pipeline.directory / "out/dtv_fine_support_*.raw"), num_freq * 8
+    )
+    assert len(masks) == pipeline.config["num_gen_frames"]
+    voltage = reference.read_raw_frames(
+        str(pipeline.directory / "out/voltage_*.raw"),
+        pipeline.config["num_times"] * num_freq * 2 * pipeline.config["num_dishes"],
+    )
+    weights = (pipeline.directory / "bundle/weights.bin").read_bytes()
+    for index in range(len(masks)):
+        rows = support[index].payload.view("<i4").reshape(num_freq, 2)
+        if index < failed:
+            want = expected_fine_products_with_support(
+                voltage[index].payload,
+                pipeline.generator["manual_freq_ids"],
+                pipeline.bundle,
+                weights,
+                pipeline.config["num_dishes"],
+            )
+            np.testing.assert_array_equal(masks[index].payload, want[0])
+            np.testing.assert_array_equal(rows, want[2])
+            continue
+        assert not masks[index].payload.any() and not powers[index].payload.any()
+        assert (rows == -1).all(), f"frame {index} carries a decision after the failure"
+
+
+def test_degrade_needs_the_support_product(pipeline):
+    pipeline.calibrate()
+    pipeline.detector["runtime_failure_mode"] = "degrade"
+    code, output = pipeline.run()
+    assert code != 0
+    assert 'runtime_failure_mode "degrade" needs dtv_fine_support_name' in output
+
+
+@pytest.mark.parametrize("line_in_bulk", [False, True])
+def test_marker_guard_band_is_enforced(pipeline, line_in_bulk):
+    pipeline.calibrate()
+    for row in pipeline.bundle["profiles"]:
+        calibration = row["fine_calibration"]
+        anchor, guard = calibration["anchor_bin"], 3
+        excluded = {(anchor + k) % 256 for k in range(-2 - guard, 3 + guard)}
+        bulk = [b for b in range(0, 256, 2) if b not in excluded]
+        if line_in_bulk:
+            bulk.append((anchor + 4) % 256 if anchor % 2 == 0 else (anchor + 5) % 256)
+        words = [sum(1 << (b % 64) for b in bulk if b // 64 == w) for w in range(4)]
+        calibration.update(
+            marker_guard_bins=guard,
+            bulk_mask_words_hex=[f"0x{word:016x}" for word in words],
+            cfar_rank=len(bulk) // 2,
+        )
+    code, output = pipeline.run()
+    if line_in_bulk:
+        assert code != 0 and "designated/guard" in output, output[-12000:]
+        return
+    assert code == 0, output[-12000:]
+    pipeline.verify()

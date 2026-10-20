@@ -100,6 +100,20 @@ class ReplayContractTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             numerical_fixture(original, 844, 12345)
 
+    def test_control_profile_replays_as_the_control(self):
+        decisions = {
+            "channels": [{"channel": 37, "outcome": "useful", "deployed_word": 72850}]
+        }
+        self.assertEqual(deployed_word(decisions, 37), 72850)
+        command = base_config(2048, 491, 4, "offline.json", control=True)[
+            "run_dtv_detector"
+        ]["gpu_0"]["commands"][0]
+        self.assertEqual(command["control_freq_ids"], [491])
+        command = base_config(2048, 844, 4, "offline.json")["run_dtv_detector"][
+            "gpu_0"
+        ]["commands"][0]
+        self.assertNotIn("control_freq_ids", command)
+
     def test_graph_refuses_added_consumer_or_live_source(self):
         config = base_config(2048, 844, 4, "offline.json")
         validate_offline_graph(config)
@@ -154,7 +168,7 @@ class ReplayContractTest(unittest.TestCase):
             block.reshape(-1), 0, False, num_freq=1, num_dishes=2, window_samples=128
         )
         z = reference.expected_row_sums(real, imag, weights).astype(np.int64)
-        np.testing.assert_allclose(powers, 256 * (z ** 2).sum(axis=(1, 2)), rtol=1e-4)
+        np.testing.assert_allclose(powers, 256 * (z**2).sum(axis=(1, 2)), rtol=1e-4)
 
 
 if __name__ == "__main__":

@@ -439,7 +439,14 @@ def triangles(matrix, block):
     [(False, False), (True, False), (False, True), (True, True)],
 )
 def test_mask_visibility_and_counts_across_ring_wrap(
-    tmp_path, runtime, real_detector, fine_support, num_times=T, reject_finite=False
+    tmp_path,
+    runtime,
+    real_detector,
+    fine_support,
+    num_times=T,
+    reject_finite=False,
+    control=False,
+    missing=False,
 ):
     T = num_times
     pipeline, masks, packet_masks, decisions = setup_pipeline(
@@ -450,6 +457,16 @@ def test_mask_visibility_and_counts_across_ring_wrap(
         num_times=T,
         reject_finite=reject_finite,
     )
+    freq_ids = pipeline.generator["manual_freq_ids"]
+    combine = pipeline.config["combine"]
+    if control:
+        combine["control_freq_ids"] = [freq_ids[2]]
+    if missing:
+        # Frequency 2's support rows are (-1, -1): missing decisions.
+        combine["require_fine_freq_ids"] = combine["require_fine_freq_ids"] + [
+            freq_ids[2]
+        ]
+        combine["missing_decision_action"] = "mask"
     code, log = pipeline.run()
     assert code == 0, log[-12000:]
 
@@ -501,6 +518,10 @@ def test_mask_visibility_and_counts_across_ring_wrap(
                 # frequency is at the permanent-mask limit even with raw mask zero.
                 good[:, 0 if index % 2 else 1] = False
                 good[:, 3] = False
+        if control:
+            good[:, 2] = masks[index][:, 2]  # the control's decision is never applied
+        if missing:
+            good[:, 2] = False
         packed = np.packbits(
             good.reshape(T // 1024, 1024, F).transpose(0, 2, 1),
             axis=-1,
@@ -529,8 +550,12 @@ def test_mask_visibility_and_counts_across_ring_wrap(
         np.testing.assert_array_equal(got_counts, triangles(expected_counts, 8))
         # Products without accepted samples have no measured visibility.
         assert np.any(expected_counts == 0)
-        if not real_detector and index == 1:
+        if not real_detector and not control and index == 1:
             assert not got_counts.any() and not got_vis.any()
+    if control:
+        assert any(decision[2] for decision in decisions)
+    if missing:
+        assert "required fine threshold not evaluated" in log, log[-12000:]
 
 
 @pytest.mark.parametrize("fault", ["frequency", "late", "missing", "period"])
@@ -576,6 +601,110 @@ def test_refuse_incomplete_or_ambiguous_threshold_binding(
     code, log = pipeline.run()
     assert code != 0, log[-12000:]
     assert "DtvRfiMask" in log and reason in log, log[-12000:]
+
+
+def test_control_frequency_is_never_masked(tmp_path, runtime):
+    test_mask_visibility_and_counts_across_ring_wrap(
+        tmp_path, runtime, real_detector=False, fine_support=True, control=True
+    )
+
+
+def test_missing_required_decision_masks_the_frame(tmp_path, runtime):
+    test_mask_visibility_and_counts_across_ring_wrap(
+        tmp_path, runtime, real_detector=False, fine_support=True, missing=True
+    )
+
+
+@pytest.mark.parametrize(
+    "settings,reason",
+    [
+        (
+            {"control_freq_ids": [4000]},
+            "control and permanent-mask frequencies overlap",
+        ),
+        ({"control_freq_ids": [5000]}, "absent"),
+        ({"missing_decision_action": "keep"}, "missing_decision_action"),
+        ({"decision_deadline_s": -1.0}, "decision_deadline_s"),
+    ],
+)
+def test_refuse_bad_control_or_missing_decision_settings(
+    tmp_path, runtime, settings, reason
+):
+    pipeline, *_ = setup_pipeline(tmp_path, runtime, fine_support=True)
+    pipeline.config["combine"].update(settings)
+    code, log = pipeline.run()
+    assert code != 0, log[-12000:]
+    assert "DtvRfiMask" in log and reason in log, log[-12000:]
+
+
+def expected_combined(keep, decision, index, *, decided):
+    """The synthetic fine-support case's combined keep mask, with or without its decision."""
+    good = keep.copy()
+    if decided:
+        good &= ~decision.astype(bool)[None, :]
+        good[:, 0 if index % 2 else 1] = False
+    else:
+        good[:, [0, 1]] = False  # every required frequency at the deadline
+    good[:, 3] = False  # the permanent mask
+    return np.packbits(
+        good.reshape(T // 1024, 1024, F).transpose(0, 2, 1), axis=-1, bitorder="little"
+    )
+
+
+@pytest.mark.parametrize("case", ["missing", "stop", "late"])
+def test_decision_deadline(tmp_path, runtime, case):
+    """Decisions that never come, or come late, release their frames masked at the
+    deadline; late ones are discarded; with "stop" a missed deadline stops the run."""
+    pipeline, masks, _, decisions = setup_pipeline(tmp_path, runtime, fine_support=True)
+    cfg = pipeline.config
+    cfg["combine"].update(
+        decision_deadline_s=0.3 if case != "late" else 0.1,
+        missing_decision_action="stop" if case == "stop" else "mask",
+    )
+    first_missing = 5
+    if case == "late":
+        cfg["read_rfi_RFImask"]["frame_period_us"] = 150000
+        for name in ("dtv_mask", "dtv_fine_support"):
+            cfg[f"read_{name}"]["frame_period_us"] = 400000
+    else:
+        for name in ("dtv_mask", "dtv_fine_support"):
+            for path in sorted((tmp_path / "input").glob(f"{name}_*.raw"))[
+                first_missing:
+            ]:
+                path.unlink()
+    code, log = pipeline.run(timeout=120)
+    if case == "stop":
+        assert code != 0, log[-12000:]
+        assert "missed its 0.300 s deadline" in log, log[-12000:]
+        return
+    assert code == 0, log[-12000:]
+    combined = reference.read_raw_frames(
+        str(tmp_path / "out/dtv_RFImask_*.raw"), T * F // 8
+    )
+    assert len(combined) == FRAMES
+    missed = []
+    for index, frame in enumerate(combined):
+        got = frame.payload.reshape(T // 1024, F, 128)
+        decided = expected_combined(masks[index], decisions[index], index, decided=True)
+        released = expected_combined(
+            masks[index], decisions[index], index, decided=False
+        )
+        if case == "missing":
+            np.testing.assert_array_equal(
+                got, released if index >= first_missing else decided
+            )
+        else:
+            assert np.array_equal(got, decided) or np.array_equal(got, released), index
+        if not np.array_equal(got, decided):
+            missed.append(index)
+    assert missed, "no frame was released at its deadline"
+    assert "deadline: the frame is masked for every required frequency" in log, log[
+        -12000:
+    ]
+    if case == "missing":
+        assert "released masked without waiting" in log, log[-12000:]
+    else:
+        assert "late decision(s) for frames already released" in log, log[-12000:]
 
 
 def test_finite_threshold_requires_full_rate_support(tmp_path, runtime):
@@ -672,3 +801,38 @@ def test_chime_detector_mask_visibility_and_counts_across_ring_wrap(
         num_times=16384,
         reject_finite=reject_finite,
     )
+
+
+def test_template_passes_control_failure_and_bad_input_settings():
+    env = Environment(loader=FileSystemLoader(str(ROOT / "config/fengine")))
+    default = yaml.safe_load(env.get_template("chord.j2").render(dtv_apply_mask=True))
+    detector = default["run_dtv_detector"]["gpu_0"]["commands"][0]
+    combine = default["run_combine_dtv_mask"]
+    assert detector["control_freq_ids"] == combine["control_freq_ids"] == []
+    assert (
+        detector["runtime_failure_mode"] == combine["missing_decision_action"] == "stop"
+    )
+    assert combine["decision_deadline_s"] == 0 and "bf_mask_name" not in detector
+    assert (
+        "host_bf_mask_ringbuffer"
+        not in default["run_dtv_detector"]["gpu_0"]["in_buffers"]
+    )
+    cfg = yaml.safe_load(
+        env.get_template("chord.j2").render(
+            dtv_apply_mask=True,
+            dtv_control_freq_ids=[4000],
+            dtv_exclude_bad_inputs=True,
+            dtv_runtime_failure_mode="degrade",
+            dtv_missing_decision_action="mask",
+            dtv_decision_deadline_s=0.05,
+        )
+    )
+    gpu = cfg["run_dtv_detector"]["gpu_0"]
+    detector, combine = gpu["commands"][0], cfg["run_combine_dtv_mask"]
+    assert detector["control_freq_ids"] == combine["control_freq_ids"] == [4000]
+    assert detector["runtime_failure_mode"] == "degrade"
+    assert combine["missing_decision_action"] == "mask"
+    assert combine["decision_deadline_s"] == 0.05
+    assert detector["bf_mask_name"] == "bf_mask"
+    assert gpu["in_buffers"]["host_bf_mask_ringbuffer"] == "host_bf_mask_ringbuffer"
+    assert "bf_mask_lifetime_in_samples" in cfg and "host_bf_mask_ringbuffer" in cfg

@@ -191,7 +191,7 @@ def numerical_fixture(candidate, freq_id, word):
     return fixture, rows[0]
 
 
-def base_config(streams, freq_id, frames, fixture_name):
+def base_config(streams, freq_id, frames, fixture_name, control=False):
     if streams <= 0 or streams % 2:
         raise ValueError("native input-stream count must be positive and even")
     config = {
@@ -272,6 +272,9 @@ def base_config(streams, freq_id, frames, fixture_name):
         },
         {"name": "cudaSyncOutput", "cuda_stream": 4},
     ]
+    if control:
+        # The channel 37 noise control is decided and recorded like any channel.
+        commands[0]["control_freq_ids"] = [freq_id]
     outputs = {}
     for name in ["dtv_mask", "dtv_powers", "dtv_fine_support"]:
         outputs[f"host_{name}"] = f"host_{name}_buffer"
@@ -637,7 +640,13 @@ def replay(args):
     (work / "sha256sums.txt").write_text(
         "".join(f"{digest}  {name}\n" for name, digest in sorted(sums.items()))
     )
-    config = base_config(streams, freq_id, len(offsets), fixture_name)
+    config = base_config(
+        streams,
+        freq_id,
+        len(offsets),
+        fixture_name,
+        control=profile["fine_calibration"]["status"] == "control",
+    )
     metadata = make_metadata(args.binary, config, streams, freq_id, work, args.timeout)
     rows = []
     with h5py.File(args.raw, "r") as source:

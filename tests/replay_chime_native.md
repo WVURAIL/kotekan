@@ -13,7 +13,9 @@ selected profile, weights, geometry, and literal word from the decisions file.
 The fixture explicitly records that it is not physically calibrated or authorized
 for activation. The source bundle is never modified. A channel that the decisions
 file does not deploy has no word; the harness refuses it, since its frames are
-masked and no detector word exists to replay. The generated graph has
+masked and no detector word exists to replay. A candidate whose channel 37
+profile has status `control` replays as the noise control at the decisions'
+channel 37 word, with its receiver ID in the detector's `control_freq_ids`. The generated graph has
 only file input, the detector, and file outputs; it has no mask consumer or live
 input. Keep candidate files and native-data receipts in an appropriately private
 location, not in this repository.

@@ -286,7 +286,8 @@ def expected_products(
         fine = fine_power_fx(projections, num_streams=NUM_POL * num_dishes)
         powers[index] = fine.sum(axis=1, dtype=np.uint64)
         calibration = profile["fine_calibration"]
-        if calibration["status"] != "calibrated":
+        # The channel 37 control is decided like a calibrated channel.
+        if calibration["status"] not in ("calibrated", "control"):
             raise ValueError(
                 f"physical channel {profile['physical_channel']} is not calibrated"
             )
