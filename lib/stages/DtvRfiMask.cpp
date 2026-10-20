@@ -109,7 +109,7 @@ public:
         N2::frameID support_id(support ? support : dtv);
         bool started = false;
         int64_t next_seq = 0;
-        int period = 0;
+        int64_t period = 0;
         std::vector<int> bound_freq;
         while (!stop_thread) {
             const auto* keep = rfi->wait_for_full_frame(unique_name, rfi_id);
