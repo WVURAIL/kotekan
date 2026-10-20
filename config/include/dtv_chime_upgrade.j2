@@ -5,6 +5,9 @@
   Include explicitly from a validated CHIME configuration. Disabled unless included.
   Receiver profiles must use chime_freq_id and qualified thresholds; archive-review-only
   candidates are refused. Validate actual stream allocation and metadata before use.
+  Optional: dtv_control_freq_ids (the channel 37 noise control, recorded only),
+  dtv_exclude_bad_inputs (exclude inputs the bad feed mask flags) and
+  dtv_runtime_failure_mode ("stop" or "degrade").
 -#}
 {% set dtv_runtime_bundle_dir = dtv_runtime_bundle_dir|default("data/pilotproxy_bundle") %}
 {% set dtv_output_dir = dtv_output_dir|default("/scratch/dtv") %}
@@ -56,6 +59,9 @@ run_dtv_detector:
         num_cuda_streams: 5
         in_buffers:
             host_xposed_voltage_ringbuffer: host_xposed_voltage_ringbuffer
+{% if dtv_exclude_bad_inputs|default(false) %}
+            host_bf_mask_ringbuffer: host_bf_mask_ringbuffer
+{% endif %}
         out_buffers:
             host_dtv_mask: host_dtv_mask_buffer
             host_dtv_powers: host_dtv_powers_buffer
@@ -69,6 +75,11 @@ run_dtv_detector:
           dtv_mask_name: dtv_mask
           dtv_powers_name: dtv_powers
           dtv_fine_support_name: dtv_fine_support
+          control_freq_ids: {{ dtv_control_freq_ids|default([]) }}
+          runtime_failure_mode: {{ dtv_runtime_failure_mode|default("stop") }}
+{% if dtv_exclude_bad_inputs|default(false) %}
+          bf_mask_name: bf_mask
+{% endif %}
           pilot_profiles_path: {{ dtv_runtime_bundle_dir }}/pilot_profiles.json
           weights_path: {{ dtv_runtime_bundle_dir }}/weights.bin
         - name: cudaSyncOutput

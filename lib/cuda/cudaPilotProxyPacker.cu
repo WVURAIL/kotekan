@@ -3,7 +3,6 @@
 // See cudaPilotProxyPacker.hpp for the input and output layouts.
 
 #include "cudaPilotProxyPacker.hpp"
-#include "cudaUtils.hpp" // for CHECK_CUDA_ERROR_NON_OO
 
 #include <cassert>
 #include <cstddef>
@@ -19,13 +18,12 @@ constexpr int TILE_STREAMS = 128;
 // Shared-memory transpose from [T,F,P,D] to [stream,tap], so that both the
 // ring reads (along P*D) and the packed writes (along T) are contiguous.
 // The tile row is padded by 4 bytes to spread the column reads over banks.
-__global__ void
-pilotproxy_pack(std::int8_t* __restrict__ const packed_out,
-                const std::uint8_t* __restrict__ const voltage_ring,
-                const std::ptrdiff_t num_streams, const std::ptrdiff_t num_frequencies,
-                const int freq_index, const std::ptrdiff_t num_time_samples,
-                const std::ptrdiff_t ringbuf_mask_t, const std::ptrdiff_t ringbuf_pos_t,
-                const int detector_window_samples, const bool time_reverse_windows) {
+__global__ void pilotproxy_pack(
+    std::int8_t* __restrict__ const packed_out, const std::uint8_t* __restrict__ const voltage_ring,
+    const std::ptrdiff_t num_streams, const std::ptrdiff_t num_frequencies, const int freq_index,
+    const std::ptrdiff_t num_time_samples, const std::ptrdiff_t ringbuf_mask_t,
+    const std::ptrdiff_t ringbuf_pos_t, const int detector_window_samples,
+    const bool time_reverse_windows, const std::uint8_t* __restrict__ const input_mask) {
     extern __shared__ std::uint8_t tile[]; // [K][TILE_STREAMS + 4]
     constexpr int row = TILE_STREAMS + 4;
     const int K = detector_window_samples;
@@ -48,24 +46,28 @@ pilotproxy_pack(std::int8_t* __restrict__ const packed_out,
     __syncthreads();
 
     // Store: adjacent threads write adjacent taps of one stream's window,
-    // 64 threads per stream.
+    // 64 threads per stream. A bad input is written as zeros.
     constexpr int lanes = 64;
-    for (int sl = tid / lanes; sl < TILE_STREAMS && s0 + sl < num_streams; sl += blockDim.x / lanes)
+    for (int sl = tid / lanes; sl < TILE_STREAMS && s0 + sl < num_streams;
+         sl += blockDim.x / lanes) {
+        const bool good = !input_mask || input_mask[s0 + sl];
         for (int k = tid % lanes; k < K; k += lanes)
             packed_out[(s0 + sl) * num_time_samples + w * K + k] =
-                std::int8_t(tile[k * row + sl] ^ std::uint8_t(0x88));
+                good ? std::int8_t(tile[k * row + sl] ^ std::uint8_t(0x88)) : std::int8_t(0);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Launcher (externally visible)
 
-void launch_pilotproxy_pack(std::int8_t* const packed_out, const std::uint8_t* const voltage_ring,
-                            const std::ptrdiff_t num_dishes, const std::ptrdiff_t num_polarizations,
-                            const std::ptrdiff_t num_frequencies, const int freq_index,
-                            const std::ptrdiff_t num_time_samples,
-                            const std::ptrdiff_t ringbuf_size_t, const std::ptrdiff_t ringbuf_pos_t,
-                            const int detector_window_samples, const bool time_reverse_windows,
-                            const cudaStream_t stream) {
+cudaError_t
+launch_pilotproxy_pack(std::int8_t* const packed_out, const std::uint8_t* const voltage_ring,
+                       const std::ptrdiff_t num_dishes, const std::ptrdiff_t num_polarizations,
+                       const std::ptrdiff_t num_frequencies, const int freq_index,
+                       const std::ptrdiff_t num_time_samples, const std::ptrdiff_t ringbuf_size_t,
+                       const std::ptrdiff_t ringbuf_pos_t, const int detector_window_samples,
+                       const bool time_reverse_windows, const std::uint8_t* const input_mask,
+                       const cudaStream_t stream) {
     assert(packed_out);
     assert(voltage_ring);
     assert(num_dishes > 0);
@@ -81,7 +83,7 @@ void launch_pilotproxy_pack(std::int8_t* const packed_out, const std::uint8_t* c
 
     const std::ptrdiff_t num_streams = num_polarizations * num_dishes;
     if (num_streams <= 0 || num_time_samples <= 0)
-        return;
+        return cudaSuccess;
 
     constexpr int threads = 256;
     const dim3 blocks(unsigned(num_time_samples / detector_window_samples),
@@ -89,8 +91,9 @@ void launch_pilotproxy_pack(std::int8_t* const packed_out, const std::uint8_t* c
     const std::size_t shared_bytes = std::size_t(detector_window_samples) * (TILE_STREAMS + 4);
     pilotproxy_pack<<<blocks, threads, shared_bytes, stream>>>(
         packed_out, voltage_ring, num_streams, num_frequencies, freq_index, num_time_samples,
-        ringbuf_size_t - 1, ringbuf_pos_t, detector_window_samples, time_reverse_windows);
-    CHECK_CUDA_ERROR_NON_OO(cudaGetLastError());
+        ringbuf_size_t - 1, ringbuf_pos_t, detector_window_samples, time_reverse_windows,
+        input_mask);
+    return cudaGetLastError();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -101,7 +104,7 @@ void cpu_pilotproxy_pack(std::int8_t* const packed_out, const std::uint8_t* cons
                          const std::ptrdiff_t num_frequencies, const int freq_index,
                          const std::ptrdiff_t num_time_samples, const std::ptrdiff_t ringbuf_size_t,
                          const std::ptrdiff_t ringbuf_pos_t, const int detector_window_samples,
-                         const bool time_reverse_windows) {
+                         const bool time_reverse_windows, const std::uint8_t* const input_mask) {
     assert(packed_out);
     assert(voltage_ring);
     assert(0 <= freq_index && freq_index < num_frequencies);
@@ -116,6 +119,7 @@ void cpu_pilotproxy_pack(std::int8_t* const packed_out, const std::uint8_t* cons
     std::ptrdiff_t out = 0;
     for (std::ptrdiff_t p = 0; p < num_polarizations; ++p) {
         for (std::ptrdiff_t d = 0; d < num_dishes; ++d) {
+            const bool good = !input_mask || input_mask[p * num_dishes + d];
             for (std::ptrdiff_t w = 0; w < windows; ++w) {
                 for (std::ptrdiff_t k = 0; k < K; ++k) {
                     const std::ptrdiff_t k_in = time_reverse_windows ? (K - 1 - k) : k;
@@ -123,7 +127,8 @@ void cpu_pilotproxy_pack(std::int8_t* const packed_out, const std::uint8_t* cons
                     const std::ptrdiff_t byte =
                         ((phys * num_frequencies + freq_index) * num_polarizations + p) * num_dishes
                         + d;
-                    packed_out[out++] = std::int8_t(voltage_ring[byte] ^ std::uint8_t(0x88));
+                    packed_out[out++] = good ? std::int8_t(voltage_ring[byte] ^ std::uint8_t(0x88))
+                                             : std::int8_t(0);
                 }
             }
         }

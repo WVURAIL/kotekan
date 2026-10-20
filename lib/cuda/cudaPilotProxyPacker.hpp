@@ -18,6 +18,11 @@
  * component in the low nibble. XOR 0x88 converts offset-binary values to
  * two's-complement int4 without changing the component order.
  *
+ * An optional input mask (1 = good, 0 = bad, one byte per stream s, the bad
+ * feed mask layout) writes zero samples for the bad streams. A zero row has
+ * zero row sums and zero fine powers, and the core's fine powers are sums over
+ * streams, so the result is exactly that of the good streams alone.
+ *
  * See cudaPilotProxyPacker.cu for the kernel and the CPU reference.
  */
 
@@ -53,14 +58,19 @@
  * @param time_reverse_windows Reverse each K-sample window (the adapter
  *                          flip assumed by post-spectral-sense weight
  *                          banks; true for CHORD runtime bundles).
+ * @param input_mask        Optional device mask [num_polarizations][num_dishes],
+ *                          1 = good; bad streams are packed as zeros. Null packs
+ *                          every stream.
  * @param stream            CUDA stream to launch on.
+ * @return The launch status (cudaGetLastError after the launch).
  */
-void launch_pilotproxy_pack(std::int8_t* packed_out, const std::uint8_t* voltage_ring,
-                            std::ptrdiff_t num_dishes, std::ptrdiff_t num_polarizations,
-                            std::ptrdiff_t num_frequencies, int freq_index,
-                            std::ptrdiff_t num_time_samples, std::ptrdiff_t ringbuf_size_t,
-                            std::ptrdiff_t ringbuf_pos_t, int detector_window_samples,
-                            bool time_reverse_windows, cudaStream_t stream);
+cudaError_t launch_pilotproxy_pack(std::int8_t* packed_out, const std::uint8_t* voltage_ring,
+                                   std::ptrdiff_t num_dishes, std::ptrdiff_t num_polarizations,
+                                   std::ptrdiff_t num_frequencies, int freq_index,
+                                   std::ptrdiff_t num_time_samples, std::ptrdiff_t ringbuf_size_t,
+                                   std::ptrdiff_t ringbuf_pos_t, int detector_window_samples,
+                                   bool time_reverse_windows, const std::uint8_t* input_mask,
+                                   cudaStream_t stream);
 
 /**
  * @brief CPU reference for @c launch_pilotproxy_pack (same arguments, minus
@@ -73,6 +83,6 @@ void cpu_pilotproxy_pack(std::int8_t* packed_out, const std::uint8_t* voltage_ri
                          std::ptrdiff_t num_frequencies, int freq_index,
                          std::ptrdiff_t num_time_samples, std::ptrdiff_t ringbuf_size_t,
                          std::ptrdiff_t ringbuf_pos_t, int detector_window_samples,
-                         bool time_reverse_windows);
+                         bool time_reverse_windows, const std::uint8_t* input_mask);
 
 #endif // CUDA_PILOTPROXY_PACKER_HPP

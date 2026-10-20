@@ -253,6 +253,13 @@ public:
         CHECK_CUDA_ERROR(cudaMalloc(&d_mask_i32, sizeof(int)));
         CHECK_CUDA_ERROR(cudaMalloc(&d_support, 2 * sizeof(int)));
         CHECK_CUDA_ERROR(cudaMemcpy(d_ring, ring.data(), ring.size(), cudaMemcpyHostToDevice));
+        // Bad feed mask (1 = good) with bad inputs in both polarizations.
+        std::vector<std::uint8_t> input_mask(num_streams, 1);
+        input_mask[1] = input_mask[num_dishes + 3] = 0;
+        std::uint8_t* d_input_mask = nullptr;
+        CHECK_CUDA_ERROR(cudaMalloc(&d_input_mask, input_mask.size()));
+        CHECK_CUDA_ERROR(
+            cudaMemcpy(d_input_mask, input_mask.data(), input_mask.size(), cudaMemcpyHostToDevice));
 
         void* const handle = FStat_Create(d_packed, int(detector_rows));
         if (!handle)
@@ -269,21 +276,33 @@ public:
             for (int freq_index = 0; freq_index < num_frequencies; ++freq_index) {
                 for (const ptrdiff_t pos : ring_positions) {
                     // --- Packer: GPU vs CPU, bit for bit.
-                    launch_pilotproxy_pack(d_packed, d_ring, num_dishes, num_polarizations,
-                                           num_frequencies, freq_index, num_time_samples, ring_size,
-                                           pos, K, reverse, /*stream=*/nullptr);
-                    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-                    CHECK_CUDA_ERROR(cudaMemcpy(packed_gpu.data(), d_packed, packed_count,
-                                                cudaMemcpyDeviceToHost));
-                    cpu_pilotproxy_pack(packed_cpu.data(), ring.data(), num_dishes,
-                                        num_polarizations, num_frequencies, freq_index,
-                                        num_time_samples, ring_size, pos, K, reverse);
-                    for (ptrdiff_t i = 0; i < packed_count; ++i)
-                        if (packed_gpu[i] != packed_cpu[i])
-                            FATAL_ERROR("packer mismatch: case(rev={:d},f={:d},pos={:d}) "
-                                        "index {:d}: gpu={:d} cpu={:d}",
-                                        int(reverse), freq_index, pos, i, packed_gpu[i],
-                                        packed_cpu[i]);
+                    // The masked pass runs first, so the unmasked pass below leaves the
+                    // staging region holding the block the kernels are checked against.
+                    for (const std::uint8_t* mask :
+                         std::array<const std::uint8_t*, 2>{d_input_mask, nullptr}) {
+                        CHECK_CUDA_ERROR(launch_pilotproxy_pack(
+                            d_packed, d_ring, num_dishes, num_polarizations, num_frequencies,
+                            freq_index, num_time_samples, ring_size, pos, K, reverse, mask,
+                            /*stream=*/nullptr));
+                        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+                        CHECK_CUDA_ERROR(cudaMemcpy(packed_gpu.data(), d_packed, packed_count,
+                                                    cudaMemcpyDeviceToHost));
+                        cpu_pilotproxy_pack(packed_cpu.data(), ring.data(), num_dishes,
+                                            num_polarizations, num_frequencies, freq_index,
+                                            num_time_samples, ring_size, pos, K, reverse,
+                                            mask ? input_mask.data() : nullptr);
+                        for (ptrdiff_t i = 0; i < packed_count; ++i)
+                            if (packed_gpu[i] != packed_cpu[i])
+                                FATAL_ERROR("packer mismatch: case(rev={:d},f={:d},pos={:d},"
+                                            "masked={:d}) index {:d}: gpu={:d} cpu={:d}",
+                                            int(reverse), freq_index, pos, int(mask != nullptr), i,
+                                            packed_gpu[i], packed_cpu[i]);
+                        if (mask)
+                            for (ptrdiff_t s = 0; s < num_streams; ++s)
+                                for (ptrdiff_t t = 0; t < num_time_samples; ++t)
+                                    if (!input_mask[s] && packed_cpu[s * num_time_samples + t])
+                                        FATAL_ERROR("bad input {:d} was not packed as zeros", s);
+                    }
 
                     // --- Row sums: GPU vs vendored CPU reference.
                     FStat_Compute_RowSums_I32(handle, weights.data(), d_row_sums);
@@ -413,6 +432,7 @@ public:
         FStat_Destroy(handle);
         CHECK_CUDA_ERROR(cudaFree(d_ring));
         CHECK_CUDA_ERROR(cudaFree(d_packed));
+        CHECK_CUDA_ERROR(cudaFree(d_input_mask));
         CHECK_CUDA_ERROR(cudaFree(d_powers));
         CHECK_CUDA_ERROR(cudaFree(d_row_sums));
         CHECK_CUDA_ERROR(cudaFree(d_fine_powers));

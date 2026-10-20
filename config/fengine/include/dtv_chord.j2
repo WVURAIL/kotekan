@@ -9,6 +9,13 @@
 # n2k use the defaults (copies in on 0, copies out on 1, kernels on 2), so the
 # detector runs its kernels on stream 3 and copies its products out on stream 4,
 # and queues behind neither.
+# Optional switches (defaults keep the fail-stop detector that sums every input):
+#   dtv_control_freq_ids          receiver IDs of the channel 37 noise control
+#                                 (decided and recorded, never applied)
+#   dtv_exclude_bad_inputs        exclude inputs the bad feed mask flags
+#   dtv_runtime_failure_mode      "stop" or "degrade" on a run-time detector error
+#   dtv_missing_decision_action   "stop" or "mask" for a missing required decision
+#   dtv_decision_deadline_s       seconds DtvRfiMask waits for a decision (0: no limit)
 
 
 ################################################################################
@@ -56,6 +63,9 @@ run_dtv_detector:
         num_cuda_streams: 5
         in_buffers:
             host_voltage_ringbuffer: host_voltage_ringbuffer
+{% if dtv_exclude_bad_inputs|default(false) %}
+            host_bf_mask_ringbuffer: host_bf_mask_ringbuffer
+{% endif %}
         out_buffers:
             host_dtv_mask: host_dtv_mask_buffer
             host_dtv_powers: host_dtv_powers_buffer
@@ -68,6 +78,11 @@ run_dtv_detector:
           dtv_powers_name: dtv_powers
           dtv_fine_support_name: dtv_fine_support
           permanent_mask_freq_ids: {{ dtv_permanent_mask_freq_ids|default([]) }}
+          control_freq_ids: {{ dtv_control_freq_ids|default([]) }}
+          runtime_failure_mode: {{ dtv_runtime_failure_mode|default("stop") }}
+{% if dtv_exclude_bad_inputs|default(false) %}
+          bf_mask_name: bf_mask
+{% endif %}
           pilot_profiles_path: {{ dtv_runtime_bundle_dir|default("data/pilotproxy_bundle") }}/pilot_profiles.json
           weights_path: {{ dtv_runtime_bundle_dir|default("data/pilotproxy_bundle") }}/weights.bin
         - name: cudaSyncOutput
@@ -110,6 +125,9 @@ run_combine_dtv_mask:
     fine_support_buf: host_dtv_fine_support_buffer
     permanent_mask_freq_ids: {{ dtv_permanent_mask_freq_ids|default([]) }}
     require_fine_freq_ids: {{ dtv_require_fine_freq_ids|default([]) }}
+    control_freq_ids: {{ dtv_control_freq_ids|default([]) }}
+    missing_decision_action: {{ dtv_missing_decision_action|default("stop") }}
+    decision_deadline_s: {{ dtv_decision_deadline_s|default(0) }}
     out_buf: host_dtv_RFImask_buffer
 
 run_send_dtv_RFImask:

@@ -29,7 +29,8 @@ Components
     powers, each the sum of that term's 256 fine powers) and, optionally,
     ``dtv_fine_support`` (``int32[F, 2]``, see below).
     Frequencies without a pilot get zero masks and powers. The detector sums
-    every input in the ring, including inputs the correlator flags as bad.
+    every input in the ring unless ``dtv_exclude_bad_inputs`` is set (see
+    `Bad inputs`_).
 
 ``external/pilotproxy``
     The CUDA detector core, copied unchanged from the PilotProxy project.
@@ -41,7 +42,8 @@ Components
     Combines the DTV decision with the SK mask ``rfi_RFImask``. A rejected
     frequency has every sample of the block cleared; a kept one keeps its SK
     mask. The result, ``dtv_RFImask``, replaces ``rfi_RFImask`` for n2k
-    correlation, n2k counts and ``RfiMaskSum``.
+    correlation, n2k counts and ``RfiMaskSum``. A control frequency (see
+    `Channel 37 control`_) is never masked.
 
 For each of 256 fine bins the core forms the ratio of the power in a target
 cell at the pilot to the power in two reference cells beside it. The block is
@@ -63,8 +65,12 @@ Runtime bundle
 ``sha256sums.txt``, exported with the PilotProxy Python tools, which are not
 part of Kotekan. Each profile gives the ATSC channel, the receiver
 ``coarse_freq`` ID it binds to (``chord_channel_id``), its weights, and its
-fine calibration, whose status is ``pending_campaign`` (not calibrated) or
-``calibrated``.
+fine calibration, whose status is ``pending_campaign`` (not calibrated),
+``calibrated``, or ``control`` (channel 37 only, see `Channel 37 control`_).
+An optional ``marker_guard_bins`` in the fine calibration widens the bins
+next to the designated set that the bulk must leave out: the stage refuses a
+bulk with a bin within ``designated_half_width + marker_guard_bins`` (at least
+two) of the anchor. It defaults to 0.
 
 At startup the stage checks the bundle's digests as the PilotProxy validator
 does: ``sha256sums.txt`` must list the other four files with their SHA-256,
@@ -110,9 +116,56 @@ Other keys:
     ``(-1, -1)`` stops the run instead of counting as a pass. ``DtvRfiMask``
     enforces this, so it applies only with ``dtv_apply_mask``.
 
-Both lists hold receiver IDs (``coarse_freq``), not ATSC channel numbers. They
+``dtv_control_freq_ids``
+    Receiver IDs of the channel 37 noise control, passed to both stages (see
+    `Channel 37 control`_).
+
+``dtv_exclude_bad_inputs``
+    Exclude the inputs the bad feed mask flags (see `Bad inputs`_). Default
+    false.
+
+``dtv_runtime_failure_mode``, ``dtv_missing_decision_action``, ``dtv_decision_deadline_s``
+    What a run-time detector failure or a missing decision does (see
+    `What stops the run`_). The defaults, ``stop``, ``stop`` and 0, stop the
+    run as before.
+
+These lists hold receiver IDs (``coarse_freq``), not ATSC channel numbers. They
 must not overlap, and every listed ID must be on the node, so they are set per
 node.
+
+
+Channel 37 control
+==================
+
+ATSC channel 37 (608 to 614 MHz) is reserved for radio astronomy and carries
+no DTV, so the detector's decisions there measure its false-alarm rate on the
+sky. A bundle profile for physical channel 37 with fine calibration status
+``control`` is bound and evaluated like a calibrated one: its decision goes to
+``dtv_mask``, its frame powers to ``dtv_powers`` and its support to
+``dtv_fine_support``. ``DtvRfiMask`` never applies it. Only channel 37 can be
+the control, and channel 37 is never ``calibrated``.
+
+List the control's receiver ID in ``dtv_control_freq_ids``; the template
+passes it to both stages. The detector stops at the first frame if a bound
+control profile is not listed or a listed ID binds no control profile, and
+``DtvRfiMask`` refuses a control ID that is also in
+``dtv_permanent_mask_freq_ids``. Every other channel the bundle does not
+calibrate is refused as before.
+
+
+Bad inputs
+==========
+
+With ``dtv_exclude_bad_inputs`` the detector reads the bad feed mask ring
+(``bf_mask``, written by ``bufferBadInputs``, 1 = good) that the SK flagger
+uses, with the same claim rule as ``cudaRFIS012tilde``. The packer writes a
+flagged input's samples as zeros. A zero input row has zero row sums and zero
+fine powers, and the frame and fine powers are sums over inputs, so every
+output equals that of the detector run on the good inputs alone; a faulty feed
+cannot hold a channel masked. The vendored core is unchanged.
+``bf_mask_lifetime_in_samples`` must be a multiple of the detector block and the
+mask stream must start at the voltage stream's first sequence number; the run
+stops otherwise. Without the switch every input is summed, as before.
 
 
 GPU streams
@@ -154,9 +207,36 @@ These stop the whole Kotekan instance, the correlator included:
 * at the first frame: missing or miscounted ``coarse_freq`` metadata, a listed
   receiver ID that is not on the node, or a bound channel that is not
   calibrated;
-* a ``coarse_freq`` change after binding, or a CUDA or detector error;
+* a ``coarse_freq`` change after binding, or a CUDA or detector error, unless
+  ``dtv_runtime_failure_mode`` is ``degrade`` (below);
 * in ``DtvRfiMask``: mismatched timestamps, frequencies or layouts, a malformed
-  support row, or an unevaluated row for a required frequency.
+  support row, or an unevaluated row for a required frequency, unless
+  ``dtv_missing_decision_action`` is ``mask`` (below).
+
+Degraded mode. With ``dtv_runtime_failure_mode: degrade`` a run-time error
+from the detector (a failed packer launch, an error the core reports, a
+failed mask copy) is logged at ERROR and the detector stops evaluating for the
+rest of the run: that frame and every later one report mask 0, powers 0 and
+support ``(-1, -1)`` for every channel, so no failure becomes a clean decision,
+and the correlator keeps running. An error that leaves the CUDA context
+unusable still stops the run, as do all startup refusals. ``degrade`` needs
+the fine support product. The ``fault_inject_frame`` key of
+``cudaPilotProxyDetector`` makes the core refuse one call at that frame, for
+commissioning tests only.
+
+Missing decisions. With ``dtv_missing_decision_action: mask``, ``DtvRfiMask``
+treats a ``(-1, -1)`` row for a required frequency as a missing decision: the
+frame is excluded for that frequency. With ``dtv_decision_deadline_s`` above
+zero it waits that long for each decision; at the deadline it releases the
+frame excluded for every required frequency (``stop`` stops the run instead),
+logs and discards the decision if it arrives later, and after three missed
+deadlines in a row releases frames without waiting until decisions resume.
+Frames excluded this way are counted apart from RFI and DTV rejections in
+``kotekan_dtvrfimask_missing_decision_frames_total`` (label ``reason``:
+``not_evaluated``, ``deadline``, or ``late_discarded`` for dropped late
+decisions); ``RfiMaskSum`` still counts their samples as flagged. A hung
+detector still holds its voltage ring: the deadline keeps the correlator
+running only until the ring fills.
 
 So an uncalibrated channel has to be left out of the bundle, or listed in
 ``dtv_permanent_mask_freq_ids``, before the run starts. A node with no bundle
