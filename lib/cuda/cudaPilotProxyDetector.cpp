@@ -1,17 +1,17 @@
-#include "Config.hpp"               // for Config
-#include "DataType.hpp"             // for int4x2_swapped_withoffset_t
-#include "NDArray.hpp"              // for NDArray
-#include "NDArrayBuffer.hpp"        // for NDArrayBuffer
-#include "NDArrayRingBuffer.hpp"    // for NDArrayRingBuffer, read_descriptor_t
-#include "bufferContainer.hpp"      // for bufferContainer
-#include "chordMetadata.hpp"        // for chordMetadata
-#include "cudaCommand.hpp"          // for cudaCommand, cudaCommandState, ...
-#include "cudaDeviceInterface.hpp"  // for cudaDeviceInterface
-#include "cudaPilotProxyPacker.hpp" // for launch_pilotproxy_pack
-#include "cudaUtils.hpp"            // for CHECK_CUDA_ERROR
-#include "gpuCommand.hpp"           // for gpuCommandType
-#include "kotekanLogging.hpp"       // for FATAL_ERROR, INFO, DEBUG
-#include "pilotproxy/f_statistic.h" // for FStat_* (vendored PilotProxy kernel)
+#include "Config.hpp"                     // for Config
+#include "DataType.hpp"                   // for int4x2_swapped_withoffset_t
+#include "NDArray.hpp"                    // for NDArray
+#include "NDArrayBuffer.hpp"              // for NDArrayBuffer
+#include "NDArrayRingBuffer.hpp"          // for NDArrayRingBuffer, read_descriptor_t
+#include "bufferContainer.hpp"            // for bufferContainer
+#include "chordMetadata.hpp"              // for chordMetadata
+#include "cudaCommand.hpp"                // for cudaCommand, cudaCommandState, ...
+#include "cudaDeviceInterface.hpp"        // for cudaDeviceInterface
+#include "cudaPilotProxyPacker.hpp"       // for launch_pilotproxy_pack
+#include "cudaUtils.hpp"                  // for CHECK_CUDA_ERROR
+#include "gpuCommand.hpp"                 // for gpuCommandType
+#include "kotekanLogging.hpp"             // for FATAL_ERROR, INFO, DEBUG
+#include "pilotproxy/pilotproxy_core.hpp" // for PilotProxyCore, pilotproxy_core
 
 #include "fmt.hpp"  // for compile_string_to_view
 #include "json.hpp" // for json
@@ -60,7 +60,10 @@ public:
     cudaPilotProxyDetectorState(kotekan::Config& config, const std::string& unique_name,
                                 kotekan::bufferContainer& host_buffers,
                                 cudaDeviceInterface& device) :
-        cudaCommandState(config, unique_name, host_buffers, device) {
+        cudaCommandState(config, unique_name, host_buffers, device),
+        core(pilotproxy_core(config.get<int>(unique_name, "detector_window_samples"))) {
+        if (!core)
+            FATAL_ERROR("cudaPilotProxyDetector: detector_window_samples must be 64 or 128");
         const std::string pilot_profiles_path =
             config.get<std::string>(unique_name, "pilot_profiles_path");
         const std::string weights_path = config.get<std::string>(unique_name, "weights_path");
@@ -77,8 +80,8 @@ public:
         // detected, all on the command's stream, so the region and the scratch are reused in
         // stream order.
         int window = 0, fine_windows = 0;
-        FStat_GetSpecs(&window, nullptr, nullptr, nullptr);
-        FStat_GetFineSpecs(&fine_windows, nullptr, nullptr);
+        core->GetSpecs(&window, nullptr, nullptr, nullptr);
+        core->GetFineSpecs(&fine_windows, nullptr, nullptr);
         const int detector_rows = config.get<int>(unique_name, "num_polarizations")
                                   * config.get<int>(unique_name, "num_dishes") * fine_windows;
         d_packed = static_cast<std::int8_t*>(device.get_gpu_memory(
@@ -90,19 +93,19 @@ public:
         for (auto& profile : bundle_profiles) {
             if (profile.receiver_channel_id < 0 || !profile.fine_calibrated)
                 continue;
-            profile.fstat_handle = FStat_Create(d_packed, detector_rows);
+            profile.fstat_handle = core->Create(d_packed, detector_rows);
             if (!profile.fstat_handle)
                 throw std::runtime_error(fmt::format(
                     fmt("cudaPilotProxyDetector: FStat_Create failed for physical channel {:d}: "
                         "{:s}"),
-                    profile.physical_channel, FStat_LastError()));
+                    profile.physical_channel, core->LastError()));
         }
     }
 
     ~cudaPilotProxyDetectorState() {
         for (auto& profile : bundle_profiles)
             if (profile.fstat_handle)
-                FStat_Destroy(profile.fstat_handle);
+                core->Destroy(profile.fstat_handle);
     }
 
     /// One pilot channel row of pilot_profiles.json (runtime bundle).
@@ -112,8 +115,8 @@ public:
         double pilot_frequency_hz = 0.0;
         std::ptrdiff_t weight_offset_bytes = 0;
         std::ptrdiff_t weight_nbytes = 0;
-        // fine_calibration (kernel core 2.3.0 mask epilogue); usable only
-        // when status is "calibrated" or "control".
+        // fine_calibration for the mask epilogue; usable only when status is
+        // "calibrated" or "control".
         bool fine_calibrated = false;
         // status "control": decided and recorded, never applied (channel 37).
         bool control = false;
@@ -134,6 +137,8 @@ public:
     };
 
     enum class RunState { wait_for_first_frame, running, disabled };
+
+    const PilotProxyCore* const core; // core built for detector_window_samples
 
     // Parsed bundle (immutable after construction)
     std::vector<PilotChannelProfile> bundle_profiles;
@@ -306,12 +311,12 @@ private:
             preprocessing.at("time_reverse_detector_windows_before_kernel").get<bool>();
 
         int expected_window = 0, expected_terms = 0, expected_bits = 0;
-        FStat_GetSpecs(&expected_window, &expected_terms, &expected_bits, nullptr);
+        core->GetSpecs(&expected_window, &expected_terms, &expected_bits, nullptr);
         const std::ptrdiff_t profile_nbytes =
             std::ptrdiff_t(expected_terms) * expected_window * sizeof(std::int8_t);
 
         int fine_bins = 0;
-        FStat_GetFineSpecs(nullptr, nullptr, &fine_bins);
+        core->GetFineSpecs(nullptr, nullptr, &fine_bins);
         std::set<int> physical_channels;
         std::set<int> receiver_channel_ids;
         std::ptrdiff_t expected_weight_offset = 0;
@@ -442,10 +447,6 @@ private:
                         "{:d}: only channel {:d} is the control, and it is never calibrated"),
                     calibration_status, profile.physical_channel, CONTROL_CHANNEL));
             if (calibration_status == "calibrated" || calibration_status == "control") {
-                if (!FStat_Supports_FusedFineMask())
-                    throw std::runtime_error(
-                        "cudaPilotProxyDetector: bundle requests calibrated fine masks but the "
-                        "compiled detector core does not support them");
                 profile.fine_calibrated = true;
                 profile.control = calibration_status == "control";
                 require(calibration, {"anchor_bin", "designated_half_width", "cfar_rank",
@@ -541,8 +542,8 @@ private:
  *
  * Each detector block is packed into stream-major rows. Packing removes the
  * offset-binary encoding and reverses each window when the bundle requests it.
- * The block length comes from the compiled core: 128 windows of 64 or 128 samples per
- * stream: 8192 samples on CHORD, or 16384 on CHIME.
+ * A block is 128 windows of detector_window_samples per stream: 8192 samples on CHORD,
+ * or 16384 on CHIME.
  * Each bound pilot channel uses the fine CFAR mask and must have a calibrated
  * profile; otherwise the stage stops at the first frame. Leave an uncalibrated
  * channel out of the bundle, or list it in permanent_mask_freq_ids.
@@ -566,7 +567,7 @@ private:
  * the target, lower-reference and upper-reference frame powers as uint64; each
  * is the sum of that term's 256 fine powers.
  * The detector handles are created with the command; each bound handle is set to this
- * command's stream with FStat_SetStream at first-frame binding, so the packer, the detector
+ * command's stream with SetStream at first-frame binding, so the packer, the detector
  * kernels and the mask fold are stream-ordered with the pipeline.
  *
  * @par GPU Memory
@@ -603,6 +604,8 @@ private:
  * @conf buffer_depth               Int. GPU frames used for pipelining.
  * @conf num_times                  Int. Voltage samples per upstream GPU
  *                                  frame (ring advance unit; 8192 for CHORD, 16384 for CHIME).
+ * @conf detector_window_samples    Int. Samples per detector window: 64 for CHORD, 128 for
+ *                                  CHIME. Must match the bundle.
  * @conf num_frequencies            Int. Local coarse frequencies (F).
  * @conf num_polarizations          Int. Polarizations (2).
  * @conf num_dishes                 Int. Dishes (D).
@@ -685,10 +688,10 @@ private:
     const std::string voltage_name;
     const std::string dtv_mask_name;
     const std::string dtv_powers_name;
-    const std::string dtv_fine_support_name; // empty preserves the legacy output contract
+    const std::string dtv_fine_support_name; // empty: no fine-support output
     const std::string bf_mask_name;          // empty: no bad feed mask
 
-    // Block geometry of the compiled core
+    // Block geometry
     const int detector_window_samples;    // K
     const int samples_per_detector_frame; // K * fine windows (8192 on CHORD)
 
@@ -703,15 +706,9 @@ private:
 
 REGISTER_CUDA_COMMAND_WITH_STATE(cudaPilotProxyDetector, cudaPilotProxyDetectorState);
 
-static int query_detector_window_samples() {
-    int window = 0;
-    FStat_GetSpecs(&window, nullptr, nullptr, nullptr);
-    return window;
-}
-
-static int query_fine_windows() {
+static int query_fine_windows(const PilotProxyCore& core) {
     int fine_windows = 0;
-    FStat_GetFineSpecs(&fine_windows, nullptr, nullptr);
+    core.GetFineSpecs(&fine_windows, nullptr, nullptr);
     return fine_windows;
 }
 
@@ -742,8 +739,8 @@ cudaPilotProxyDetector::cudaPilotProxyDetector(kotekan::Config& config,
         config.get_default<std::string>(unique_name, "dtv_fine_support_name", "")),
     bf_mask_name(config.get_default<std::string>(unique_name, "bf_mask_name", "")),
     // Block geometry
-    detector_window_samples(query_detector_window_samples()),
-    samples_per_detector_frame(detector_window_samples * query_fine_windows()),
+    detector_window_samples(config.get<int>(unique_name, "detector_window_samples")),
+    samples_per_detector_frame(detector_window_samples * query_fine_windows(*detector_state->core)),
     // Buffers
     voltage(voltage_name, "E",
             std::array<std::ptrdiff_t, 4>{std::ptrdiff_t(buffer_depth) * num_times, num_frequencies,
@@ -784,8 +781,6 @@ cudaPilotProxyDetector::cudaPilotProxyDetector(kotekan::Config& config,
     dtv_mask.register_producer();
     dtv_powers.register_producer();
     if (!dtv_fine_support_name.empty()) {
-        if (!FStat_Supports_FusedFineMaskWithSupport())
-            FATAL_ERROR("PilotProxy core does not provide fine rank-support outputs");
         dtv_fine_support = std::make_unique<NDArrayBuffer<std::int32_t, 2>>(
             dtv_fine_support_name, "dtv_fine_support",
             std::array<std::ptrdiff_t, 2>{num_frequencies, 2}, std::array<std::string, 2>{"F", "S"},
@@ -823,10 +818,11 @@ std::set<int> cudaPilotProxyDetector::read_receiver_ids(kotekan::Config& config,
         FATAL_ERROR("{:s} must be an array of receiver frequency IDs", field);
     std::set<int> result;
     for (const auto& value : ids) {
-        if (!value.is_number_integer() || value < 0 || value >= 12288)
-            FATAL_ERROR("{:s} must contain integer receiver IDs in [0,12288)", field);
+        if (!value.is_number_integer() || value < 0 || value >= CHORD_META_MAX_FREQ)
+            FATAL_ERROR("{:s} must contain integer receiver IDs in [0,{:d})", field,
+                        CHORD_META_MAX_FREQ);
         if (!result.insert(value.get<int>()).second)
-            FATAL_ERROR("{:s} must contain unique receiver IDs in [0,12288)", field);
+            FATAL_ERROR("{:s} must contain unique receiver IDs", field);
     }
     return result;
 }
@@ -960,7 +956,7 @@ void cudaPilotProxyDetector::bind_first_frame(
     }
 
     for (const auto& channel : state.bound_channels)
-        FStat_SetStream(channel.profile->fstat_handle, device.getStream(cuda_stream_id));
+        state.core->SetStream(channel.profile->fstat_handle, device.getStream(cuda_stream_id));
 
     state.run_state = State::RunState::running;
 }
@@ -1057,8 +1053,7 @@ cudaEvent_t cudaPilotProxyDetector::execute(cudaPipelineState& /*pipestate*/,
             return runtime_failure(fmt::format(fmt("packer launch for physical channel {:d}: {:s}"),
                                                profile.physical_channel, cudaGetErrorString(err)),
                                    kotekan_stream);
-        const InputType* const weights =
-            reinterpret_cast<const InputType*>(state.weights_for(profile));
+        const std::int8_t* const weights = state.weights_for(profile);
         unsigned long long* const channel_powers =
             reinterpret_cast<unsigned long long*>(powers_memory + 3 * channel.freq_index);
         // An out-of-range anchor makes the core refuse the call with an API error.
@@ -1066,19 +1061,19 @@ cudaEvent_t cudaPilotProxyDetector::execute(cudaPipelineState& /*pipestate*/,
         // Compute the fine CFAR decision and save the frame powers for validation.
         if (support_memory) {
             // Rank support is not packet-loss or feed-health qualification.
-            FStat_Compute_FusedFineMaskWithSupport_U64(
+            state.core->Compute_FusedFineMaskWithSupport_U64(
                 profile.fstat_handle, weights, anchor_bin, profile.designated_half_width,
                 profile.bulk_mask_words.data(), profile.cfar_rank, profile.multiplier_q16,
                 state.fine_power_scratch, state.mask_i32_scratch,
                 support_memory + 2 * channel.freq_index,
                 support_memory + 2 * channel.freq_index + 1, channel_powers, nullptr);
         } else {
-            FStat_Compute_FusedFineMask_U64(
+            state.core->Compute_FusedFineMask_U64(
                 profile.fstat_handle, weights, anchor_bin, profile.designated_half_width,
                 profile.bulk_mask_words.data(), profile.cfar_rank, profile.multiplier_q16,
                 state.fine_power_scratch, state.mask_i32_scratch, channel_powers, nullptr);
         }
-        if (const char* error = FStat_LastError(); error != nullptr && error[0] != '\0')
+        if (const char* error = state.core->LastError(); error != nullptr && error[0] != '\0')
             return runtime_failure(fmt::format(fmt("fine detector for physical channel {:d}: {:s}"),
                                                profile.physical_channel, error),
                                    kotekan_stream);

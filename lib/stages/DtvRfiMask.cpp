@@ -63,9 +63,9 @@
  * @conf    num_local_freq  int  Frequencies per frame.
  * @conf    num_times       int  Samples per detector block; must be 8192 or 16384.
  * @conf    permanent_mask_freq_ids List of unique integer receiver coarse-frequency IDs
- *          in [0,12288) at the reject-all limit (default []).
+ *          in [0,CHORD_META_MAX_FREQ) at the reject-all limit (default []).
  * @conf    require_fine_freq_ids List of unique integer receiver coarse-frequency IDs
- *          in [0,12288) that must have an evaluated fine decision (default []).
+ *          in [0,CHORD_META_MAX_FREQ) that must have an evaluated fine decision (default []).
  *          Requires fine_support_buf when nonempty. Both lists must be disjoint and
  *          contain only IDs in the input frequency assignment.
  * @conf    control_freq_ids List of unique receiver IDs whose decision is never applied
@@ -108,9 +108,10 @@ public:
             if (!ids.is_array())
                 FATAL_ERROR("DtvRfiMask {:s} must be an array", field);
             for (const auto& id : ids) {
-                if (!id.is_number_integer() || id < 0 || id >= 12288)
-                    FATAL_ERROR(
-                        "DtvRfiMask threshold IDs must be exact nonnegative integers below 12288");
+                if (!id.is_number_integer() || id < 0 || id >= CHORD_META_MAX_FREQ)
+                    FATAL_ERROR("DtvRfiMask threshold IDs must be exact nonnegative integers below "
+                                "{:d}",
+                                CHORD_META_MAX_FREQ);
                 result.push_back(id.get<int>());
             }
             if (std::set<int>(result.begin(), result.end()).size() != result.size())
@@ -182,7 +183,7 @@ public:
         int64_t next_seq = 0;
         // Sequence of the oldest frame whose decision is neither applied nor discarded.
         int64_t next_decision_seq = 0;
-        int period = 0;
+        int64_t period = 0;
         std::vector<int> bound_freq;
         int missed_in_a_row = 0, discarded_in_a_row = 0;
         bool reported_unevaluated = false;
@@ -227,7 +228,7 @@ public:
                 const auto pm = get_chord_metadata(plcounts_in, plcounts_in_id);
                 pm->check_frame_desc(plcounts_in->get_frame_desc<kotekan::GenericNDArray>());
                 if (pm->get_fpga_seq_num() != seq
-                    || pm->get_time_downsampling_fpga() != int64_t(rp) * mask_rows
+                    || pm->get_time_downsampling_fpga() != rp * mask_rows
                     || !pm->has_coarse_freq() || pm->get_coarse_freq() != freq)
                     FATAL_ERROR("DtvRfiMask packet-loss counts identity mismatch");
                 for (int f = 0; f < frequencies; ++f)
@@ -248,7 +249,7 @@ public:
                 const auto dm = get_chord_metadata(dtv, dtv_id);
                 dm->check_frame_desc(dtv->get_frame_desc<kotekan::GenericNDArray>());
                 dp = dm->get_time_downsampling_fpga();
-                if (dp <= 0 || int64_t(rp) * mask_rows != dp)
+                if (dp <= 0 || rp * mask_rows != dp)
                     FATAL_ERROR("DtvRfiMask time alignment mismatch");
                 if (support) {
                     // The support frame follows its decision; give it a fresh deadline.
@@ -385,7 +386,7 @@ public:
                 rfi_count->mark_frame_full(unique_name, rfi_count_id++);
             }
             started = true;
-            next_seq = seq + int64_t(rp) * mask_rows;
+            next_seq = seq + rp * mask_rows;
             period = rp;
             bound_freq = freq;
             rfi->mark_frame_empty(unique_name, rfi_id++);

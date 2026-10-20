@@ -42,7 +42,7 @@ class MetadataPrefix(ctypes.LittleEndianStructure):
         ("limits", ctypes.c_int32 * 6),
         ("frame", ctypes.c_int32),
         ("sequence", ctypes.c_int64),
-        ("period", ctypes.c_int32),
+        ("period", ctypes.c_int64),
         ("name", ctypes.c_char * 24),
         ("type", ctypes.c_int32),
         ("dims", ctypes.c_int32),
@@ -264,6 +264,7 @@ def base_config(streams, freq_id, frames, fixture_name, control=False):
             "name": "cudaPilotProxyDetector",
             "cuda_stream": 3,
             "voltage_name": "voltage",
+            "detector_window_samples": 128,
             "dtv_mask_name": "dtv_mask",
             "dtv_powers_name": "dtv_powers",
             "dtv_fine_support_name": "dtv_fine_support",
@@ -693,7 +694,7 @@ def replay(args):
             header = bytearray(metadata)
             struct.pack_into("<i", header, 24, index)
             struct.pack_into("<q", header, 32, sequence)
-            struct.pack_into("<i", header, 40, 1)
+            struct.pack_into("<q", header, 40, 1)
             path = work / "input" / f"voltage_{index:07d}.raw"
             with path.open("wb") as stream:
                 stream.write(struct.pack("<I", len(header)))
