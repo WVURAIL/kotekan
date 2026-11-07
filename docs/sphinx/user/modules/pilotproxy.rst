@@ -228,7 +228,8 @@ Monitoring
   moved pilot or a new line near a reference bin can be seen there even when
   the mask does not fire. Either one requires a recalibration.
 * With ``dtv_record_fine_powers``, ``config/chord/dtv.j2`` also writes
-  ``dtv_fine_powers``. PilotProxy calibrates a bundle from these files, so a
+  ``dtv_fine_powers`` under ``dtv_output_dir`` on each node, since all 384 rows are
+  too large for the recv path. PilotProxy calibrates a bundle from these files, so a
   detect-only run replaces baseband captures for calibration. Only rows with a
   bound channel are filled, so the compressed files stay small.
 * A bundle profile with the status ``control`` (channel 37, which has no DTV) is

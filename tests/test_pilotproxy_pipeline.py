@@ -258,7 +258,8 @@ def test_pathfinder_records_fine_powers_on_request(record):
         )
     )
     assert ("host_dtv_fine_powers_buffer_0" in config) is record
-    assert ("fine_powers_0" in config["write_dtv"]) is record
+    assert ("fine_powers_0" in config.get("write_dtv", {})) is record
+    assert "fine_powers_0" not in config["send_dtv"]
 
 
 @pytest.mark.parametrize("apply_mask", [False, True])
