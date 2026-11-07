@@ -305,7 +305,10 @@ def expected_products(
             cfar_rank=calibration["cfar_rank"],
             multiplier_q16=calibration["cfar_multiplier_q16"],
         )
-        masks[index] = 0 if calibration["status"] == "control" else decision.mask
+        if calibration["status"] == "control":
+            # decided and recorded, with no mask and no support
+            continue
+        masks[index] = decision.mask
         support[index] = (int(decision.valid), decision.n_bulk)
     return masks, powers, support
 

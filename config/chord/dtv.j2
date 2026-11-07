@@ -11,6 +11,8 @@
 {% set dtv_output_dir = dtv_output_dir|default("/scratch/dtv") %}
 
 {% set dtv_record_fine_powers = dtv_record_fine_powers|default(false) %}
+{# a half binds one or two channels #}
+{% set dtv_fine_powers_rows = dtv_fine_powers_rows|default(2) %}
 # One frame per 8192-sample block: mask, target/lower/upper powers
 # (sums of 256 fine powers), and per-frequency fine support.
 # dtv_record_fine_powers adds the fine powers, for calibration from a detect-only run.
@@ -21,7 +23,7 @@
 ] %}
 {% if dtv_record_fine_powers %}
 {% set dtv_products = dtv_products + [
-    ("fine_powers", "uint64", "[1, num_local_freq, 3, 256]", '["T", "F", "W", "B"]', "[8192, 1, 1, 1]"),
+    ("fine_powers", "uint64", "[1, " ~ dtv_fine_powers_rows ~ ", 3, 256]", '["T", "F", "W", "B"]', "[8192, 1, 1, 1]"),
 ] %}
 {% endif %}
 {% for n in numa_halves %}
@@ -82,6 +84,7 @@ run_dtv_detector:
           dtv_fine_support_name: dtv_fine_support
 {%- if dtv_record_fine_powers %}
           dtv_fine_powers_name: dtv_fine_powers
+          dtv_fine_powers_rows: {{ dtv_fine_powers_rows }}
 {%- endif %}
           pilot_profiles_path: {{ dtv_runtime_bundle_dir }}/pilot_profiles.json
           weights_path: {{ dtv_runtime_bundle_dir }}/weights.bin
