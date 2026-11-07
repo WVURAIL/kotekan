@@ -12,6 +12,8 @@
 {% set dtv_record_fine_powers = dtv_record_fine_powers|default(false) %}
 {% set dtv_output_dir = dtv_output_dir|default("/scratch/dtv") %}
 
+{# a half binds one or two channels #}
+{% set dtv_fine_powers_rows = dtv_fine_powers_rows|default(2) %}
 # One frame per 8192-sample block: mask, target/lower/upper powers
 # (sums of 256 fine powers), and per-frequency fine support. NDArrayTimeConcat packs
 # dtv_blocks_per_frame blocks (~43 s) into one _concat frame, which is sent to the recv
@@ -44,15 +46,15 @@ host_dtv_{{ product }}{{ suffix }}_buffer{{ n.sfx }}:
 {% endfor %}
 {% endfor %}
 {% if dtv_record_fine_powers %}
-# Fine powers stay on the node: every frame holds all 384 frequencies, about 900 MB/s over
-# 16 halves on the network, and only the bound rows hold data, so they compress on disk.
+# Fine powers stay on the node for the live test. With dtv_fine_powers_rows they are about
+# 0.29 MB/s per half and can move to recv once kotekan#1878 and kotekan#1874 merge.
 {% for n in numa_halves %}
 {% for suffix in ["", "_write"] %}
 host_dtv_fine_powers{{ suffix }}_buffer{{ n.sfx }}:
     kotekan_buffer: ndarray
     num_frames: host_side_buffer_depth
     value_type: uint64
-    extents: [1, num_local_freq, 3, 256]
+    extents: [1, {{ dtv_fine_powers_rows }}, 3, 256]
     quantity_name: "dtv_fine_powers"
     dimnames: ["T", "F", "W", "B"]
     dimscalings: [8192, 1, 1, 1]
@@ -103,6 +105,7 @@ run_dtv_detector:
           dtv_fine_support_name: dtv_fine_support
 {%- if dtv_record_fine_powers %}
           dtv_fine_powers_name: dtv_fine_powers
+          dtv_fine_powers_rows: {{ dtv_fine_powers_rows }}
 {%- endif %}
           pilot_profiles_path: {{ dtv_runtime_bundle_dir }}/pilot_profiles.json
           weights_path: {{ dtv_runtime_bundle_dir }}/weights.bin

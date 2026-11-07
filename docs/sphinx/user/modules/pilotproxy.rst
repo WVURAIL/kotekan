@@ -32,8 +32,8 @@ Components
     rejects the block), ``dtv_powers`` (``uint64[1, F, 3]``, the target and the
     two reference frame powers, each the sum of the 256 fine powers of that
     term), and optionally ``dtv_fine_support`` (``int32[1, F, 2]``, described
-    below) and ``dtv_fine_powers`` (``uint64[1, F, 3, 256]``, the fine powers
-    behind each decision). Frequencies without a pilot get zero masks and powers. The
+    below) and ``dtv_fine_powers`` (``uint64[1, R, 3, 256]``, the fine powers
+    behind each decision). Frequencies without a bound profile get zero masks and powers. The
     detector sums every input in the ring, even the inputs that the correlator
     flags as bad.
     The leading ``T`` axis holds one block, scaled by its FPGA sequence period,
@@ -228,10 +228,12 @@ Monitoring
   moved pilot or a new line near a reference bin can be seen there even when
   the mask does not fire. Either one requires a recalibration.
 * With ``dtv_record_fine_powers``, ``config/chord/dtv.j2`` also writes
-  ``dtv_fine_powers`` under ``dtv_output_dir`` on each node, since all 384 rows are
-  too large for the recv path. PilotProxy calibrates a bundle from these files, so a
-  detect-only run replaces baseband captures for calibration. Only rows with a
-  bound channel are filled, so the compressed files stay small.
+  ``dtv_fine_powers`` under ``dtv_output_dir`` on each node. PilotProxy calibrates a bundle from these files, so a
+  detect-only run replaces baseband captures for calibration. The output has
+  ``dtv_fine_powers_rows`` rows (R, 2 on the Pathfinder), with bound channel i
+  in row i and its ``coarse_freq`` in the metadata (-1 for an unused row). A
+  node that binds more than R channels stops at its first frame.
 * A bundle profile with the status ``control`` (channel 37, which has no DTV) is
-  decided and recorded like a pilot, and its mask stays zero. Calibration uses
-  it to set the noise floor.
+  decided and recorded like a pilot, and its mask stays zero. Its fine support
+  stays ``(-1, -1)``, so ``DtvRfiMask`` never clears it. Only channel 37 can
+  have this status. Calibration uses it to set the noise floor.
