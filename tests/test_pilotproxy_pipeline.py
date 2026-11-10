@@ -258,8 +258,17 @@ def test_pathfinder_records_fine_powers_on_request(record):
         )
     )
     assert ("host_dtv_fine_powers_buffer_0" in config) is record
-    assert ("fine_powers_0" in config.get("write_dtv", {})) is record
-    assert "fine_powers_0" not in config["send_dtv"]
+    assert ("fine_powers_0" in config["send_dtv"]) is record
+    recv = yaml.safe_load(
+        env.get_template("recv.j2").render(dtv_record_fine_powers=record)
+    )
+    assert ("fine_powers" in recv["write_dtv"]) is record
+    if record:
+        sent = config["host_dtv_fine_powers_send_buffer_0"]
+        assert recv["dtv_fine_powers_buffer"]["extents"] == sent["extents"]
+        assert recv["buffer_recv_dtv"]["fine_powers"]["listen_port"] == (
+            config["send_dtv"]["fine_powers_0"]["server_port"]
+        )
 
 
 @pytest.mark.parametrize("apply_mask", [False, True])

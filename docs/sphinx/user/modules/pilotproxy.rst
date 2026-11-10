@@ -238,8 +238,9 @@ Monitoring
 * ``dtv_powers`` holds the pilot and reference powers of every block, so a
   moved pilot or a new line near a reference bin can be seen there even when
   the mask does not fire. Either one requires a recalibration.
-* With ``dtv_record_fine_powers``, ``config/chord/dtv.j2`` also writes
-  ``dtv_fine_powers`` under ``dtv_output_dir`` on each node. PilotProxy calibrates a bundle from these files, so a
+* With ``dtv_record_fine_powers``, ``config/chord/dtv.j2`` also sends
+  ``dtv_fine_powers`` to the recv node on port 11037, and ``recv.j2`` must be
+  rendered with the same ``dtv_record_fine_powers`` and ``dtv_fine_powers_rows``. PilotProxy calibrates a bundle from these files, so a
   detect-only run replaces baseband captures for calibration. The output has
   ``dtv_fine_powers_rows`` rows (R, 2 on the Pathfinder), with bound channel i
   in row i and its ``coarse_freq`` in the metadata (-1 for an unused row). A
