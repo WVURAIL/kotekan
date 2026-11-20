@@ -57,7 +57,7 @@ log_level: info
 
 # Set to True to run without any network output: no FRB, baseband, visibility
 # or RFI senders, and no dataset broker.
-{% set disable_output = False %}
+{% set disable_output = disable_output|default(False) %}
 
 ########################
 #### NUMA layout    ####
@@ -85,6 +85,14 @@ log_level: info
    1023, 1058, 1141, 1166, 1225, 1280, 1281, 1285, 1311, 1314, 1343,
    1380, 1381, 1479, 1521, 1523, 1543, 1642, 1684, 1687, 1738, 1792,
    1794, 1910, 1912, 1943, 1945, 1950, 1982, 1984, 1987, 2032, 2034] %}
+
+{# Cylinders whose F-engine links reach this node: stream i of each link group
+   comes from cylinder i (0-3 = A-D).  The links of the others get no handler,
+   and their 512 inputs are flagged. #}
+{% set live_cylinders = live_cylinders|default([0, 1, 2, 3]) %}
+{% set missing_inputs = [] %}
+{% for c in range(4) if c not in live_cylinders %}{% set _ = missing_inputs.extend(range(512 * c, 512 * (c + 1))) %}{% endfor %}
+{% set bad_inputs = (bad_inputs + missing_inputs) | unique | sort %}
 
 {% set num_polarizations = 2 %}
 {% set num_dishes = 1024 %}
@@ -394,7 +402,7 @@ dpdk:
 {%- for n in numa_domains %}
 {%- for id in range(4) %}
 {%- for g in range(4) %}
-    - dpdk_handler: iceBoardShuffle # port {{ ports_per_numa * n + 4 * id + g }}, NUMA domain {{ n }}
+    - dpdk_handler: {{ "iceBoardShuffle" if id in live_cylinders else "none" }} # port {{ ports_per_numa * n + 4 * id + g }}, NUMA domain {{ n }}
       link_group: {{ 4 * n + g }}
       link_group_subid: {{ id }}
       out_bufs:
